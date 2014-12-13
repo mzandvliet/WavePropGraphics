@@ -42,11 +42,12 @@
 				return saturate((val - start) / (end - start));
 			}
 
+			/* Todo: this still assumes worldspace, and can be simplified if in object space because vertex == uv */
 			float2 morphVertex(float2 gridPos, float2 vertex, float lerp) {
 				const float g_resolution = 16.0;
 
 				float2 fracPart = frac(gridPos.xy * g_resolution * 0.5) * 2; // Create sawtooth pattern that peeks every other vertex
-				return vertex.xy - (fracPart  / g_resolution * lerp);
+				return vertex - (fracPart  / g_resolution * lerp);
 			}
 
 			/*
@@ -82,11 +83,8 @@
 			v2f vert (appdata_base v) {
 				v2f o;
 				
-				o.uv = v.texcoord.xy;			
-
 				/* shift odd-numbered vertices to even numbered vertices based on distance to camera */
 
-				
 				float4 wsVertex = v.vertex;
 				//float4 wsVertex = mul(_Object2World, v.vertex); // For world space effects
 
@@ -115,9 +113,8 @@
 				//o.pos = mul(UNITY_MATRIX_VP, wsVertex); // If vertex calculations above are in world space
 
 				// Transform logarithmically
-				//o.flogz = TransformVertexLog(o.pos);
+				o.flogz = TransformVertexLog(o.pos);
 				
-				o.uv = v.texcoord.xy;
 				o.lightDir = normalize(ObjSpaceLightDir(v.vertex));
 				o.normal = normalize(v.normal).xyz;
 				
@@ -130,7 +127,7 @@
 			
 			half4 frag(v2f i, out float depth:DEPTH) : COLOR {
 				// Transform logarithmically
-				//depth = GetFragmentDepthLog(i.flogz);
+				depth = GetFragmentDepthLog(i.flogz);
 				
 				float3 L = normalize(i.lightDir);
 				float3 N = normalize(i.normal);

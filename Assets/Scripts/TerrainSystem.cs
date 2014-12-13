@@ -6,7 +6,21 @@ using UnityEngine;
  * Walk quadtree tree each frame to find the payloads that should be streamed/generated
  *      LOD level is based on 3D distance to the camera
  * Get a mesh from the pool and stream data into it
- * Shift odd-numbered vertices in vertex shader based on cam distance (approximation) for smooth lod transition
+ * 
+ * Todo: 
+ * 
+ * Quadtree rendering algorithm
+ * - Expand quaddree nodes based on distance rule and apply frustum culling
+ * - Gather leaves into a list (this list contains all nodes that should be visible)
+ * - Diff list with list from last frame
+ * - Load/Unload tile data based on the diff
+ * - Render the currently loaded tile set
+ * 
+ * - Figure out how to disable the 4 quadrants of a tile without cpu overhead
+ * 
+ * - Separate culling passes to find visual and shadow caster tiles, use pass tags to render them differently
+ *      - https://gist.github.com/pigeon6/4237385
+ * 
  */
 public class TerrainSystem : MonoBehaviour {
     [SerializeField] private Material _material;
