@@ -7,28 +7,29 @@
 
 	SubShader {
 		Tags { "RenderType"="Opaque" }
-				
+
 		Pass {
 			Tags { "LightMode"="ForwardBase" }
-		
+
 			CGPROGRAM
-			
+
 			#pragma target 3.0
 			#pragma fragmentoption ARB_precision_hint_fastest
-			
+
 			#pragma vertex vert
 			#pragma fragment frag
 			#pragma multi_compile_fwdbase
-			
+
 			#include "UnityCG.cginc"
 			#include "AutoLight.cginc"
 			#include "LogDepth.cginc"
 
 			sampler2D _MainTex;
 			sampler2D _HeightTex;
+			float _Scale;
 			float4 _Tint;
 			float4 _LightColor0;
-			
+
 			struct v2f {
 				float4 pos : POSITION;
 				float3 lightDir : TEXCOORD0;
@@ -37,17 +38,9 @@
 				float flogz : TEXCOORD3;
 				LIGHTING_COORDS(4, 5)
 			};
-			
+
 			inline float invLerp(float start, float end, float val) {
 				return saturate((val - start) / (end - start));
-			}
-
-			/* Todo: this still assumes worldspace, and can be simplified if in object space because vertex == uv */
-			float2 morphVertex(float2 gridPos, float2 vertex, float lerp) {
-				const float g_resolution = 16.0;
-
-				float2 fracPart = frac(gridPos.xy * g_resolution * 0.5) * 2; // Create sawtooth pattern that peeks every other vertex
-				return vertex - (fracPart  / g_resolution * lerp);
 			}
 
 			/*
@@ -74,19 +67,24 @@
 				return lerp(tA, tB, pixelFrac.y);
 			}
 
+			/* Todo: this still assumes worldspace, and can be simplified if in object space because vertex == uv */
+			float2 morphVertex(float2 gridPos, float2 vertex, float lerp) {
+				const float g_resolution = 16.0;
+
+				float2 fracPart = frac(gridPos.xy * g_resolution * 0.5) * 2; // Create sawtooth pattern that peaks every other vertex
+				return vertex - (fracPart  / g_resolution * lerp);
+			}
 
 			/* Todo:
-			 * - Need to output corrected UV coords
-			 * - Faster distance approximation
+			 * - Normals
 			 */
 
 			v2f vert (appdata_base v) {
 				v2f o;
-				
+
 				/* shift odd-numbered vertices to even numbered vertices based on distance to camera */
 
 				float4 wsVertex = v.vertex;
-				//float4 wsVertex = mul(_Object2World, v.vertex); // For world space effects
 
 				// Construct morph parameter based on distance to camera
 				float distance = length(wsVertex.xyz - _WorldSpaceCameraPos);
@@ -102,50 +100,54 @@
 				/*
 				 * Sample height
 				 *
-				 * todo: need normalized localspace coords, but displaced by morph. 
+				 * todo: need normalized localspace coords, but displaced by morph.
 				 * Using worldspace only works now because of tile size
 				 */
 				float4 height = tex2Dlod_bilinear(_HeightTex, float4(wsVertex.x, wsVertex.z, 0, 0));
 				wsVertex.y = height.r;
 
+				// Todo: We can't do this here. The above morphVertex function needs the verts to be at the right scale for dist check.
+				wsVertex.x *= _Scale;
+				wsVertex.z *= _Scale;
+				o.uv *= _Scale;
+
 				// Clip space
 				o.pos = mul(UNITY_MATRIX_MVP, wsVertex);
-				//o.pos = mul(UNITY_MATRIX_VP, wsVertex); // If vertex calculations above are in world space
 
 				// Transform logarithmically
 				o.flogz = TransformVertexLog(o.pos);
-				
+
 				o.lightDir = normalize(ObjSpaceLightDir(v.vertex));
 				o.normal = normalize(v.normal).xyz;
-				
+
 				TRANSFER_VERTEX_TO_FRAGMENT(o);
-				
+
 				return o;
 			}
 
-			
-			
+
+
 			half4 frag(v2f i, out float depth:DEPTH) : COLOR {
 				// Transform logarithmically
 				depth = GetFragmentDepthLog(i.flogz);
-				
+
 				float3 L = normalize(i.lightDir);
 				float3 N = normalize(i.normal);
-				
+
 				float attenuation = LIGHT_ATTENUATION(i) * 2;
 				float4 ambient = UNITY_LIGHTMODEL_AMBIENT * 2;
-				
+
 				float NDotL = saturate(dot(N, L));
 				float4 diffuseTerm = NDotL * _LightColor0 * _Tint * attenuation;
-				
+
 				float4 diffuse = tex2D(_MainTex, i.uv);
 				float4 finalColor = (ambient + diffuseTerm) * diffuse;
-				
+
 				return finalColor;
 			}
-			
+
 			ENDCG
 		}
-	} 
+	}
 	FallBack "Diffuse"
 }

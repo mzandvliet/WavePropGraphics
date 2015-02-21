@@ -21,6 +21,8 @@ using UnityEngine;
  * - Separate culling passes to find visual and shadow caster tiles, use pass tags to render them differently
  *      - https://gist.github.com/pigeon6/4237385
  * 
+ *
+ * The higher above the terrain you are, the fewer high-res patches are loaded. These could then be used so show even farther away terrain.
  */
 public class TerrainSystem : MonoBehaviour {
     [SerializeField] private Material _material;
@@ -28,7 +30,6 @@ public class TerrainSystem : MonoBehaviour {
 
     private Texture2D _heightmap;
 
-	// Use this for initialization
 	void Start () {
 	    const int resolution = 16;
 
@@ -38,6 +39,7 @@ public class TerrainSystem : MonoBehaviour {
 	    tile.MeshRenderer.material = _material;
 
         tile.MeshRenderer.material.SetTexture("_HeightTex", _heightmap);
+        tile.MeshRenderer.material.SetFloat("_Scale", 16f);
 	}
 
     private static Texture2D GenerateHeightmap(int resolution) {
@@ -169,9 +171,8 @@ public class TerrainMesh {
         /* We can set these manually with the knowledge we have during content
          * streaming (todo: autocalc bounds fails here for some reason, why?)
          */
-        _mesh.bounds = new Bounds(new Vector3(0.5f, 0.5f, 0.5f), new Vector3(1f, 1f, 1f));
-        _mesh.RecalculateNormals();
-
+        _mesh.bounds = new Bounds(new Vector3(8f, 8f, 8f), new Vector3(16f, 16f, 16f));
+        
         _meshFilter.mesh = _mesh;
     }
 
