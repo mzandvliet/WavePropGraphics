@@ -26,20 +26,47 @@ using UnityEngine;
  */
 public class TerrainSystem : MonoBehaviour {
     [SerializeField] private Material _material;
-    private List<TerrainMesh> _meshPool;
+    [SerializeField] private Camera _camera;
 
+    private List<TerrainMesh> _meshPool;
     private Texture2D _heightmap;
 
-	void Start () {
-	    const int resolution = 16;
+    void Awake() {
+        const int resolution = 16;
 
         _heightmap = GenerateHeightmap(resolution);
 
-	    var tile = new TerrainMesh(resolution);
-	    tile.MeshRenderer.material = _material;
+        _meshPool = new List<TerrainMesh>(64);
+        var lodDistances = QuadTree.GetLodDistances(10, 32f);
+        var nodes = QuadTree.ExpandNodesToList(10000f, lodDistances, CameraInfo.Create(_camera));
 
-        tile.MeshRenderer.material.SetTexture("_HeightTex", _heightmap);
+        for (int i = 0; i < nodes.Count; i++) {
+            var lodNodes = nodes[i];
+            var lerpRanges = new Vector4(lodDistances[i] * 1.66f, lodDistances[i] * 1.9f);
+
+            Debug.Log(i + ": " + lodNodes.Count);
+
+            for (int j = 0; j < lodNodes.Count; j++) {
+                var mesh = CreateMesh(_heightmap, resolution, _material);
+                _meshPool.Add(mesh);
+
+                mesh.GameObject.name = "Terrain_LOD_" + i;
+                mesh.Transform.position = lodNodes[j].Center - (new Vector3(lodNodes[i].Size * 0.5f, 0f, lodNodes[i].Size * 0.5f));
+                mesh.Transform.localScale = Vector3.one * lodNodes[j].Size;
+                mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
+            }
+        }
+    }
+
+	private static TerrainMesh CreateMesh (Texture2D heightmap, int resolution, Material material) {
+	    var tile = new TerrainMesh(resolution);
+	    tile.MeshRenderer.material = material;
+
+        tile.MeshRenderer.material.SetTexture("_HeightTex", heightmap);
         tile.MeshRenderer.material.SetFloat("_Scale", 16f);
+        tile.MeshRenderer.material.SetVector("_LerpRanges", new Vector4(1f, 4f));
+
+	    return tile;
 	}
 
     private static Texture2D GenerateHeightmap(int resolution) {
@@ -54,8 +81,13 @@ public class TerrainSystem : MonoBehaviour {
         return heightmap;
     }
 
-    private void OnGUI() {
-        GUI.DrawTexture(new Rect(16, 16, 128, 128), _heightmap);
+//    private void OnGUI() {
+//        GUI.DrawTexture(new Rect(16, 16, 128, 128), _heightmap);
+//    }
+
+    private void OnDrawGizmos() {
+        var nodes = QuadTree.ExpandNodesToList(10000f, QuadTree.GetLodDistances(8, 64f), CameraInfo.Create(_camera));
+        QuadTree.DrawSelectedNodes(nodes);
     }
 }
 

@@ -26,7 +26,7 @@
 
 			sampler2D _MainTex;
 			sampler2D _HeightTex;
-			float _Scale;
+			float2 _LerpRanges;
 			float4 _Tint;
 			float4 _LightColor0;
 
@@ -67,7 +67,6 @@
 				return lerp(tA, tB, pixelFrac.y);
 			}
 
-			/* Todo: this still assumes worldspace, and can be simplified if in object space because vertex == uv */
 			float2 morphVertex(float2 gridPos, float2 vertex, float lerp) {
 				const float g_resolution = 16.0;
 
@@ -84,35 +83,27 @@
 
 				/* shift odd-numbered vertices to even numbered vertices based on distance to camera */
 
-				float4 wsVertex = v.vertex;
+				float4 wsVertex = mul(_Object2World, v.vertex); // world space vert for distance
 
 				// Construct morph parameter based on distance to camera
 				float distance = length(wsVertex.xyz - _WorldSpaceCameraPos);
-				float morph = invLerp(1.0, 4.0, distance);
+				float morph = invLerp(_LerpRanges.x, _LerpRanges.y, distance);
 
-				// Morph
-				float2 morphedVertex = morphVertex(float2(v.texcoord.x, v.texcoord.y), float2(wsVertex.x, wsVertex.z), morph);
+				// Morph in in local unit space
+				float2 morphedVertex = morphVertex(float2(v.texcoord.x, v.texcoord.y), float2(v.vertex.x, v.vertex.z), morph);
 				wsVertex.x = morphedVertex.x;
 				wsVertex.z = morphedVertex.y;
 
-				o.uv = morphedVertex; // Can do this right now because we're still in object space
+				o.uv = morphedVertex;
 
-				/*
-				 * Sample height
-				 *
-				 * todo: need normalized localspace coords, but displaced by morph.
-				 * Using worldspace only works now because of tile size
-				 */
-				float4 height = tex2Dlod_bilinear(_HeightTex, float4(wsVertex.x, wsVertex.z, 0, 0));
+				wsVertex = mul(_Object2World, wsVertex); // Morphed vertex to world space
+
+				// Sample height using morphed local unit space
+				float4 height = tex2Dlod_bilinear(_HeightTex, float4(morphedVertex.x, morphedVertex.y, 0, 0));
 				wsVertex.y = height.r;
 
-				// Todo: We can't do this here. The above morphVertex function needs the verts to be at the right scale for dist check.
-				wsVertex.x *= _Scale;
-				wsVertex.z *= _Scale;
-				o.uv *= _Scale;
-
-				// Clip space
-				o.pos = mul(UNITY_MATRIX_MVP, wsVertex);
+				// To clip space
+				o.pos = mul(UNITY_MATRIX_VP, wsVertex);
 
 				// Transform logarithmically
 				o.flogz = TransformVertexLog(o.pos);

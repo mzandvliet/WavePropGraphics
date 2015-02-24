@@ -23,19 +23,8 @@ using System.Collections.Generic;
  * Could use Bounds and GeometryUtility from UnityEngine
  */
 
-public class QuadTreeTest : MonoBehaviour {
-    [SerializeField]
-    private Camera _camera;
-    [SerializeField]
-    private float _range = 1000f;
-    [SerializeField]
-    private float _lodZeroRange = 16f;
-    [SerializeField]
-    private int _numLods = 8;
-
-    private float[] _lodDistances;
-
-    private static float[] GetLodDistances(int numLods, float lodZeroRange) {
+public static class QuadTree {
+   public static float[] GetLodDistances(int numLods, float lodZeroRange) {
         // Todo: this would be a lot easier to read if lod level indices were in reversed order
         float[] distances = new float[numLods];
 
@@ -65,8 +54,10 @@ public class QuadTreeTest : MonoBehaviour {
     }
 
     public static void ExpandNodeRecursively(int currentLod, QTNode node, CameraInfo cam, float[] lodDistances, IList<IList<QTNode>> selectedNodes) {
-        if (currentLod >= lodDistances.Length)
+        if (currentLod == lodDistances.Length-1) {
+            selectedNodes[currentLod].Add(node);
             return;
+        }
 
         var distance = Vector3.Distance(cam.Position, node.Center);
         if (distance < lodDistances[currentLod]) {
@@ -79,24 +70,12 @@ public class QuadTreeTest : MonoBehaviour {
         }
     }
 
-    private static bool Intersect(CameraInfo info, QTNode node) {
-
+    private static bool IntersectFrustum(CameraInfo info, QTNode node) {
         return true;
     }
 
-    private void OnDrawGizmos() {
-        var lodDistances = GetLodDistances(_numLods, _lodZeroRange);
-        var cam = CameraInfo.Create(_camera);
-
-        IList<IList<QTNode>> nodes = ExpandNodesToList(_range, lodDistances, cam);
-        DrawSelectedNodes(nodes);
-
-        //QTNode node = MakeTree();
-        //DrawNodeRecursively(node, 0, _numLods);
-    }
-
-    private static void DrawNodeRecursively(QTNode node, int currentLod, int maxLod) {
-        Gizmos.color = Color.Lerp(Color.red, Color.green, currentLod / (float)maxLod);
+    public static void DrawNodeRecursively(QTNode node, int currentLod, int maxLod) {
+        Gizmos.color = Color.Lerp(Color.red, Color.green, Frac(currentLod * 3f, maxLod * 3f));
         DrawQuad(node.Center, node.Size);
         if (node.Children != null) {
             for (int i = 0; i < node.Children.Length; i++) {
@@ -105,7 +84,12 @@ public class QuadTreeTest : MonoBehaviour {
         }
     }
 
-    private static void DrawSelectedNodes(IList<IList<QTNode>> nodes) {
+    private static float Frac(float num, float div) {
+        float frac = num/div;
+        return frac - Mathf.Floor(frac);
+    }
+
+    public static void DrawSelectedNodes(IList<IList<QTNode>> nodes) {
         for (int i = 0; i < nodes.Count; i++) {
             Gizmos.color = Color.Lerp(Color.red, Color.green, i / (float)nodes.Count);
             for (int j = 0; j < nodes[i].Count; j++) {
