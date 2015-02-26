@@ -27,49 +27,132 @@ using UnityEngine;
 public class TerrainSystem : MonoBehaviour {
     [SerializeField] private Material _material;
     [SerializeField] private Camera _camera;
+    [SerializeField] private int _tileResolution = 16;
+    [SerializeField] private int _numLods = 10;
+    [SerializeField] private float _lodZeroRange = 32f;
 
-    private List<TerrainMesh> _meshPool;
     private Texture2D _heightmap;
+    private float[] _lodDistances;
+
+    private Stack<TerrainMesh> _meshPool;
+    private IDictionary<QTNode, TerrainMesh> _activeMeshes;  
+    private IList<IList<QTNode>> _loadedNodes;
 
     void Awake() {
-        const int resolution = 16;
+        _heightmap = GenerateHeightmapFlat(_tileResolution);
+        _lodDistances = QuadTree.GetLodDistances(_numLods, _lodZeroRange);
 
-        _heightmap = GenerateHeightmap(resolution);
+        _loadedNodes = new List<IList<QTNode>>();
+        for (int i = 0; i < _numLods; i++) {
+            _loadedNodes.Add(new List<QTNode>());
+        }
 
-        _meshPool = new List<TerrainMesh>(64);
-        var lodDistances = QuadTree.GetLodDistances(10, 32f);
-        var nodes = QuadTree.ExpandNodesToList(10000f, lodDistances, CameraInfo.Create(_camera));
+        const int numTiles = 392;
+        _meshPool = new Stack<TerrainMesh>();
+        for (int i = 0; i < numTiles; i++) {
+            var mesh = CreateMesh(_tileResolution, _material);
+            mesh.Transform.parent = transform;
+            mesh.GameObject.SetActive(false);
+            _meshPool.Push(mesh);
+        }
 
-        for (int i = 0; i < nodes.Count; i++) {
-            var lodNodes = nodes[i];
-            var lerpRanges = new Vector4(lodDistances[i] * 1.66f, lodDistances[i] * 1.9f);
+        _activeMeshes = new Dictionary<QTNode, TerrainMesh>();
+    }
 
-            Debug.Log(i + ": " + lodNodes.Count);
+    /*
+     * We are receiving a new list of quadtree nodes each time, which we need to compare with the old list.
+     * 
+     * Testing equality of nodes is iffy. Nodes are reference types in one sense, but then value types later.
+     * Also, if nodes have more data to them it makes more sense to keep them as reference type. Caching and
+     * reusing a single tree instead of generating an immutable tree each frame and diffing.
+     * 
+     * We could mark nodes on a persistent tree structure dirty if some action is need. Update this dirty state
+     * when validating the tree each frame, and creating jobs frome there.
+     * 
+     * We currently use three collections to manage node and mesh instances. It's unwieldy.
+     * 
+     * -- Performance --
+     * 
+     * Creating a class QTNode-based tree each frame means heap-related garbage. Creating a recursive struct QTNode
+     * is impossible because a struct can not have members of its own type.
+     * 
+     * We could pool QTNodes
+     * 
+     * We could use a single mesh instance on the GPU, but we still need separate mesh instances on the cpu for tiles
+     * we want colliders on, which is every lod > x
+     */
 
-            for (int j = 0; j < lodNodes.Count; j++) {
-                var mesh = CreateMesh(_heightmap, resolution, _material);
-                _meshPool.Add(mesh);
+    private void Update() {
+        var requiredNodes = QuadTree.ExpandNodesToList(16000f, _lodDistances, CameraInfo.Create(_camera));
 
-                mesh.GameObject.name = "Terrain_LOD_" + i;
-                mesh.Transform.position = lodNodes[j].Center - (new Vector3(lodNodes[i].Size * 0.5f, 0f, lodNodes[i].Size * 0.5f));
-                mesh.Transform.localScale = Vector3.one * lodNodes[j].Size;
-                mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
+        var toUnload = QuadTree.Diff(requiredNodes, _loadedNodes);
+        var toLoad = QuadTree.Diff(_loadedNodes, requiredNodes);
+
+        Unload(toUnload);
+        Load(toLoad);
+    }
+
+    private void Unload(IList<IList<QTNode>> toUnload) {
+        for (int i = 0; i < toUnload.Count; i++) {
+            for (int j = 0; j < toUnload[i].Count; j++) {
+                var node = toUnload[i][j];
+                var mesh = _activeMeshes[node];
+                _meshPool.Push(mesh);
+                _loadedNodes[i].Remove(node);
+                _activeMeshes.Remove(node);
+                mesh.GameObject.SetActive(false);
             }
         }
     }
 
-	private static TerrainMesh CreateMesh (Texture2D heightmap, int resolution, Material material) {
+    private void Load(IList<IList<QTNode>> toLoad) {
+        for (int i = 0; i < toLoad.Count; i++) {
+            var lodNodes = toLoad[i];
+            var lerpRanges = new Vector4(_lodDistances[i]*1.66f, _lodDistances[i]*1.9f);
+
+            for (int j = 0; j < lodNodes.Count; j++) {
+                var node = lodNodes[j];
+                var mesh = _meshPool.Pop();
+                _activeMeshes.Add(node, mesh);
+
+                Vector3 scale = Vector3.one*node.Size;
+
+                mesh.GameObject.name = "Terrain_LOD_" + i;
+                mesh.Transform.position = node.Center - (new Vector3(node.Size*0.5f, 0f, node.Size*0.5f));
+                mesh.Transform.localScale = scale;
+                mesh.MeshRenderer.material.SetFloat("_Scale", scale.x);
+                mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
+                mesh.SetHeightmap(_heightmap);
+                mesh.GameObject.SetActive(true);
+
+                _loadedNodes[i].Add(node);
+            }
+        }
+    }
+
+    private static TerrainMesh CreateMesh (int resolution, Material material) {
 	    var tile = new TerrainMesh(resolution);
 	    tile.MeshRenderer.material = material;
 
-        tile.MeshRenderer.material.SetTexture("_HeightTex", heightmap);
         tile.MeshRenderer.material.SetFloat("_Scale", 16f);
-        tile.MeshRenderer.material.SetVector("_LerpRanges", new Vector4(1f, 4f));
+        tile.MeshRenderer.material.SetVector("_LerpRanges", new Vector4(1f, 16f));
 
 	    return tile;
 	}
 
-    private static Texture2D GenerateHeightmap(int resolution) {
+    private static Texture2D GenerateHeightmapFlat(int resolution) {
+        var heightmap = new Texture2D(resolution, resolution, TextureFormat.ARGB32, false, true);
+        for (int x = 0; x < resolution; x++) {
+            for (int y = 0; y < resolution; y++) {
+                float height = 0f;
+                heightmap.SetPixel(x, y, new Color(height, height, height, 1f));
+            }
+        }
+        heightmap.Apply(false);
+        return heightmap;
+    }
+
+    private static Texture2D GenerateHeightmapSine(int resolution) {
         var heightmap = new Texture2D(resolution, resolution, TextureFormat.ARGB32, false, true);
         for (int x = 0; x < resolution; x++) {
             for (int y = 0; y < resolution; y++) {
@@ -80,10 +163,6 @@ public class TerrainSystem : MonoBehaviour {
         heightmap.Apply(false);
         return heightmap;
     }
-
-//    private void OnGUI() {
-//        GUI.DrawTexture(new Rect(16, 16, 128, 128), _heightmap);
-//    }
 
     private void OnDrawGizmos() {
         var nodes = QuadTree.ExpandNodesToList(10000f, QuadTree.GetLodDistances(8, 64f), CameraInfo.Create(_camera));
@@ -157,6 +236,10 @@ public class TerrainMesh {
         _meshRenderer = _gameObject.AddComponent<MeshRenderer>();
         
         CreateMesh(resolution);
+    }
+
+    public void SetHeightmap(Texture2D heightmap) {
+        MeshRenderer.material.SetTexture("_HeightTex", heightmap);
     }
 
     private void CreateMesh(int resolution) {

@@ -74,19 +74,29 @@ public static class QuadTree {
         return true;
     }
 
+    public static IList<IList<QTNode>> Diff(IList<IList<QTNode>> a, IList<IList<QTNode>> b) {
+        IList<IList<QTNode>> result = new List<IList<QTNode>>();
+
+        for (int i = 0; i < b.Count; i++) {
+            result.Add(new List<QTNode>());
+            for (int j = 0; j < b[i].Count; j++) {
+                if (!a[i].Contains(b[i][j])) {
+                    result[i].Add(b[i][j]);
+                }
+            }
+        }
+
+        return result;
+    } 
+
     public static void DrawNodeRecursively(QTNode node, int currentLod, int maxLod) {
-        Gizmos.color = Color.Lerp(Color.red, Color.green, Frac(currentLod * 3f, maxLod * 3f));
+        Gizmos.color = Color.Lerp(Color.red, Color.green, currentLod / (float)maxLod);
         DrawQuad(node.Center, node.Size);
         if (node.Children != null) {
             for (int i = 0; i < node.Children.Length; i++) {
                 DrawNodeRecursively(node.Children[i], currentLod + 1, maxLod);
             }
         }
-    }
-
-    private static float Frac(float num, float div) {
-        float frac = num/div;
-        return frac - Mathf.Floor(frac);
     }
 
     public static void DrawSelectedNodes(IList<IList<QTNode>> nodes) {
@@ -126,6 +136,31 @@ public class QTNode {
         Children[1] = new QTNode(Center + new Vector3(-quarterSize, 0f, quarterSize), halfSize);
         Children[2] = new QTNode(Center + new Vector3(quarterSize, 0f, quarterSize), halfSize);
         Children[3] = new QTNode(Center + new Vector3(quarterSize, 0f, -quarterSize), halfSize);
+    }
+
+    // Todo: decide whether QTNode is a reference or value type. This is just weird.
+
+    protected bool Equals(QTNode other) {
+        return Center == other.Center && Math.Abs(Size - other.Size) < float.Epsilon;
+    }
+
+    public override bool Equals(object obj) {
+        if (ReferenceEquals(null, obj)) {
+            return false;
+        }
+        if (ReferenceEquals(this, obj)) {
+            return true;
+        }
+        if (obj.GetType() != this.GetType()) {
+            return false;
+        }
+        return Equals((QTNode) obj);
+    }
+
+    public override int GetHashCode() {
+        unchecked {
+            return (Center.GetHashCode()*397) ^ Size.GetHashCode();
+        }
     }
 }
 

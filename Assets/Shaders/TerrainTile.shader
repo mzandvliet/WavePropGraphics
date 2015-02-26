@@ -26,6 +26,7 @@
 
 			sampler2D _MainTex;
 			sampler2D _HeightTex;
+			float _Scale;
 			float2 _LerpRanges;
 			float4 _Tint;
 			float4 _LightColor0;
@@ -35,7 +36,7 @@
 				float3 lightDir : TEXCOORD0;
 				float3 normal : TEXCOORD1;
 				float2 uv : TEXCOORD2;
-				float flogz : TEXCOORD3;
+				//float flogz : TEXCOORD3;
 				LIGHTING_COORDS(4, 5)
 			};
 
@@ -90,11 +91,11 @@
 				float morph = invLerp(_LerpRanges.x, _LerpRanges.y, distance);
 
 				// Morph in in local unit space
-				float2 morphedVertex = morphVertex(float2(v.texcoord.x, v.texcoord.y), float2(v.vertex.x, v.vertex.z), morph);
+				float2 morphedVertex = morphVertex(float2(v.vertex.x, v.vertex.z), float2(v.vertex.x, v.vertex.z), morph);
 				wsVertex.x = morphedVertex.x;
 				wsVertex.z = morphedVertex.y;
 
-				o.uv = morphedVertex;
+				o.uv = frac(v.vertex.xz);
 
 				wsVertex = mul(_Object2World, wsVertex); // Morphed vertex to world space
 
@@ -106,7 +107,7 @@
 				o.pos = mul(UNITY_MATRIX_VP, wsVertex);
 
 				// Transform logarithmically
-				o.flogz = TransformVertexLog(o.pos);
+				//o.flogz = TransformVertexLog(o.pos);
 
 				o.lightDir = normalize(ObjSpaceLightDir(v.vertex));
 				o.normal = normalize(v.normal).xyz;
@@ -118,9 +119,9 @@
 
 
 
-			half4 frag(v2f i, out float depth:DEPTH) : COLOR {
+			half4 frag(v2f i) : COLOR { //out float depth:DEPTH
 				// Transform logarithmically
-				depth = GetFragmentDepthLog(i.flogz);
+				//depth = GetFragmentDepthLog(i.flogz);
 
 				float3 L = normalize(i.lightDir);
 				float3 N = normalize(i.normal);
