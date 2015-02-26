@@ -60,6 +60,12 @@ public class TerrainSystem : MonoBehaviour {
     }
 
     /*
+     * -- Configuration --
+     * 
+     * Make easier-to-use parameters. Like, at max lod I want 1px/m resolution.
+     * 
+     * -- Architecture --
+     * 
      * We are receiving a new list of quadtree nodes each time, which we need to compare with the old list.
      * 
      * Testing equality of nodes is iffy. Nodes are reference types in one sense, but then value types later.
@@ -83,7 +89,7 @@ public class TerrainSystem : MonoBehaviour {
      */
 
     private void Update() {
-        var requiredNodes = QuadTree.ExpandNodesToList(16000f, _lodDistances, CameraInfo.Create(_camera));
+        var requiredNodes = QuadTree.ExpandNodesToList(16384f, _lodDistances, CameraInfo.Create(_camera));
 
         var toUnload = QuadTree.Diff(requiredNodes, _loadedNodes);
         var toLoad = QuadTree.Diff(_loadedNodes, requiredNodes);
@@ -165,7 +171,7 @@ public class TerrainSystem : MonoBehaviour {
     }
 
     private void OnDrawGizmos() {
-        var nodes = QuadTree.ExpandNodesToList(10000f, QuadTree.GetLodDistances(8, 64f), CameraInfo.Create(_camera));
+        var nodes = QuadTree.ExpandNodesToList(16384f, QuadTree.GetLodDistances(8, 64f), CameraInfo.Create(_camera));
         QuadTree.DrawSelectedNodes(nodes);
     }
 }

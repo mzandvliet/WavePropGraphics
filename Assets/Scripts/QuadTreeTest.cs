@@ -39,9 +39,9 @@ public static class QuadTree {
     /* This does two things: expand the quadtree based on distance rule and culling, and parses the results
      * to a handy to use list for streaming. Could be two separate functions, but that would be less speedy
      */
-    public static IList<IList<QTNode>> ExpandNodesToList(float range, float[] lodDistances, CameraInfo cam) {
+    public static IList<IList<QTNode>> ExpandNodesToList(float lodZeroSize, float[] lodDistances, CameraInfo cam) {
         Vector3 rootPosition = Vector3.zero;
-        var root = new QTNode(rootPosition, range);
+        var root = new QTNode(rootPosition, lodZeroSize);
 
         IList<IList<QTNode>> selectedNodes = new List<IList<QTNode>>(lodDistances.Length);
         for (int i = 0; i < lodDistances.Length; i++) {

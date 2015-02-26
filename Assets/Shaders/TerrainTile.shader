@@ -68,8 +68,9 @@
 				return lerp(tA, tB, pixelFrac.y);
 			}
 
+			// Todo: right now this is in unit quad space, so gridpos == vertex. Simplify.
 			float2 morphVertex(float2 gridPos, float2 vertex, float lerp) {
-				const float g_resolution = 16.0;
+				const float g_resolution = 16.0; // Todo: supply from script
 
 				float2 fracPart = frac(gridPos.xy * g_resolution * 0.5) * 2; // Create sawtooth pattern that peaks every other vertex
 				return vertex - (fracPart  / g_resolution * lerp);
@@ -95,7 +96,7 @@
 				wsVertex.x = morphedVertex.x;
 				wsVertex.z = morphedVertex.y;
 
-				o.uv = frac(v.vertex.xz);
+				o.uv = morphedVertex * _Scale / 16.0; // Todo: set resolution and uv scale from script
 
 				wsVertex = mul(_Object2World, wsVertex); // Morphed vertex to world space
 
