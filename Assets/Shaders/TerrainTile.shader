@@ -2,7 +2,7 @@
 	Properties {
 		_MainTex ("Base (RGB)", 2D) = "white" {}
 		_HeightTex ("Height Map", 2D) = "white" {}
-		_Tint ("Tint (RGB)", Color) = (1,1,1,1)
+		_NormalTex ("Normal Map", 2D) = "bump" {}
 	}
 
 	SubShader {
@@ -26,9 +26,10 @@
 
 			sampler2D _MainTex;
 			sampler2D _HeightTex;
+			sampler2D _NormalTex;
 			float _Scale;
+			float _HeightScale;
 			float2 _LerpRanges;
-			float4 _Tint;
 			float4 _LightColor0;
 
 			struct v2f {
@@ -36,8 +37,9 @@
 				float3 lightDir : TEXCOORD0;
 				float3 normal : TEXCOORD1;
 				float2 uv : TEXCOORD2;
-				//float flogz : TEXCOORD3;
-				LIGHTING_COORDS(4, 5)
+				float3 viewDir : TEXCOORD3;
+				float flogz : TEXCOORD4;
+				LIGHTING_COORDS(5, 6)
 			};
 
 			inline float invLerp(float start, float end, float val) {
@@ -76,9 +78,7 @@
 				return vertex - (fracPart  / g_resolution * lerp);
 			}
 
-			/* Todo:
-			 * - Normals
-			 */
+			//float3 getNormal(sampler2D heights, )
 
 			v2f vert (appdata_base v) {
 				v2f o;
@@ -91,27 +91,30 @@
 				float distance = length(wsVertex.xyz - _WorldSpaceCameraPos);
 				float morph = invLerp(_LerpRanges.x, _LerpRanges.y, distance);
 
-				// Morph in in local unit space
+				// Morph in local unit space
 				float2 morphedVertex = morphVertex(float2(v.vertex.x, v.vertex.z), float2(v.vertex.x, v.vertex.z), morph);
 				wsVertex.x = morphedVertex.x;
 				wsVertex.z = morphedVertex.y;
 
-				o.uv = morphedVertex * _Scale / 16.0; // Todo: set resolution and uv scale from script
+				// Make splat texture tile
+				o.uv = morphedVertex * _Scale / 16.0; // Todo: set resolution and uv-scale from script
+
 
 				wsVertex = mul(_Object2World, wsVertex); // Morphed vertex to world space
 
 				// Sample height using morphed local unit space
-				float4 height = tex2Dlod_bilinear(_HeightTex, float4(morphedVertex.x, morphedVertex.y, 0, 0));
-				wsVertex.y = height.r;
+				float4 height = tex2Dlod(_HeightTex, float4(morphedVertex.x, morphedVertex.y, 0, 0));
+				wsVertex.y = height.r * _HeightScale;
 
 				// To clip space
 				o.pos = mul(UNITY_MATRIX_VP, wsVertex);
-
 				// Transform logarithmically
 				//o.flogz = TransformVertexLog(o.pos);
 
 				o.lightDir = normalize(ObjSpaceLightDir(v.vertex));
-				o.normal = normalize(v.normal).xyz;
+				//float3 norm = UnpackNormal(tex2D (_NormalTex, morphedVertex));
+				o.normal = float3(0,1,0);
+				//o.normal = norm;//float3(0,0,0);
 
 				TRANSFER_VERTEX_TO_FRAGMENT(o);
 
@@ -131,11 +134,12 @@
 				float4 ambient = UNITY_LIGHTMODEL_AMBIENT * 2;
 
 				float NDotL = saturate(dot(N, L));
-				float4 diffuseTerm = NDotL * _LightColor0 * _Tint * attenuation;
+				float4 diffuseTerm = NDotL * _LightColor0 * attenuation;
 
 				float4 diffuse = tex2D(_MainTex, i.uv);
 				float4 finalColor = (ambient + diffuseTerm) * diffuse;
 
+				//return half4(N, 1.0);
 				return finalColor;
 			}
 
