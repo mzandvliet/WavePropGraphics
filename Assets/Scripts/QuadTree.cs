@@ -1,6 +1,7 @@
 ﻿using System;
 using UnityEngine;
 using System.Collections.Generic;
+using System.Runtime.Remoting.Messaging;
 
 /*
  * Just occurred to me: for quadtree traversal and culling the nodes need height information.
@@ -41,7 +42,7 @@ public static class QuadTree {
      */
     public static IList<IList<QTNode>> ExpandNodesToList(float lodZeroSize, float[] lodDistances, CameraInfo cam) {
         Vector3 rootPosition = Vector3.zero;
-        var root = new QTNode(rootPosition, lodZeroSize);
+        var root = new QTNode(null, rootPosition, lodZeroSize);
 
         IList<IList<QTNode>> selectedNodes = new List<IList<QTNode>>(lodDistances.Length);
         for (int i = 0; i < lodDistances.Length; i++) {
@@ -53,21 +54,40 @@ public static class QuadTree {
         return selectedNodes;
     }
 
+    // Todo: partial child expansion (needs parent mesh partial vertex enable/disable)
+    // Todo: optimize
     public static void ExpandNodeRecursively(int currentLod, QTNode node, CameraInfo cam, float[] lodDistances, IList<IList<QTNode>> selectedNodes) {
+        // If we're at the deepest lod level, no need to expand further
         if (currentLod == lodDistances.Length-1) {
             selectedNodes[currentLod].Add(node);
             return;
         }
 
-        var distance = Vector3.Distance(cam.Position, node.Center);
-        if (distance < lodDistances[currentLod]) {
-            node.CreateChildren();
+        // If not, we should create children if we're in LOD range
+        if (Intersect(node, cam, lodDistances[currentLod])) {
+            if (node.Children == null) {
+                node.CreateChildren();
+            }
+
             for (int i = 0; i < node.Children.Length; i++) {
                 ExpandNodeRecursively(currentLod + 1, node.Children[i], cam, lodDistances, selectedNodes);
             }
-        } else {
-            selectedNodes[currentLod].Add(node);
+            return;
         }
+
+        // If we don't need to expand, just add to the list (todo: can roll into top if statement)
+        selectedNodes[currentLod].Add(node);
+    }
+
+    // Todo: this check should be 3D, but is only on the horizontal plane right now
+    // Todo: optimize
+    private static bool Intersect(QTNode node, CameraInfo camInfo, float range) {
+        float halfSize = node.Size*0.5f;
+        return
+            Vector3.Distance(node.Center + new Vector3(-halfSize, 256f, -halfSize), camInfo.Position) < range ||
+            Vector3.Distance(node.Center + new Vector3(-halfSize, 256f, halfSize), camInfo.Position) < range ||
+            Vector3.Distance(node.Center + new Vector3(halfSize, 256f, -halfSize), camInfo.Position) < range ||
+            Vector3.Distance(node.Center + new Vector3(halfSize, 256f, halfSize), camInfo.Position) < range;
     }
 
     private static bool IntersectFrustum(CameraInfo info, QTNode node) {
@@ -119,11 +139,13 @@ public static class QuadTree {
 }
 
 public class QTNode {
+    public QTNode Parent { get; private set; }
     public QTNode[] Children { get; private set; }
     public Vector3 Center { get; private set; }
     public float Size { get; private set; }
 
-    public QTNode(Vector3 center, float size) {
+    public QTNode(QTNode parent, Vector3 center, float size) {
+        Parent = parent;
         Center = center;
         Size = size;
     }
@@ -132,10 +154,10 @@ public class QTNode {
         Children = new QTNode[4];
         float halfSize = Size*0.5f;
         float quarterSize = Size*0.25f;
-        Children[0] = new QTNode(Center + new Vector3(-quarterSize, 0f, -quarterSize), halfSize);
-        Children[1] = new QTNode(Center + new Vector3(-quarterSize, 0f, quarterSize), halfSize);
-        Children[2] = new QTNode(Center + new Vector3(quarterSize, 0f, quarterSize), halfSize);
-        Children[3] = new QTNode(Center + new Vector3(quarterSize, 0f, -quarterSize), halfSize);
+        Children[0] = new QTNode(this, Center + new Vector3(-quarterSize, 0f, -quarterSize), halfSize);
+        Children[1] = new QTNode(this, Center + new Vector3(-quarterSize, 0f, quarterSize), halfSize);
+        Children[2] = new QTNode(this, Center + new Vector3(quarterSize, 0f, quarterSize), halfSize);
+        Children[3] = new QTNode(this, Center + new Vector3(quarterSize, 0f, -quarterSize), halfSize);
     }
 
     // Todo: decide whether QTNode is a reference or value type. This is just weird.

@@ -10,6 +10,8 @@ using UnityEngine;
  * 
  * Todo: 
  * 
+ * Use a noise lib that actually produces proper values. Geez.
+ * 
  * Quadtree rendering algorithm
  * - Expand quaddree nodes based on distance rule and apply frustum culling
  * - Gather leaves into a list (this list contains all nodes that should be visible)
@@ -103,14 +105,19 @@ public class TerrainSystem : MonoBehaviour {
      * 
      * -- Bugs --
      * 
-     * Distance is broken, because it doesn't take height into account properly. Do we use some sort of preprocessed
-     * barycentric coordinate for each node?
+     * We need accurate bounding boxes that encapsulate height data for each node during quad-tree traversal, otherwise
+     * the intersection test (and hence the lod selection) will be inaccurate.
      * 
      * Shadows are broken. Sometimes something shows up, but it's completely wrong.
      */
 
     private void Update() {
-        var requiredNodes = QuadTree.ExpandNodesToList(_lodZeroScale, _lodDistances, CameraInfo.Create(_camera));
+        var camInfo = CameraInfo.Create(_camera);
+//        var camInfo = new CameraInfo();
+//        camInfo.FrustumPlanes = GeometryUtility.CalculateFrustumPlanes(_camera);
+//        camInfo.Position = new Vector3(_camera.transform.position.x, 0f, _camera.transform.position.z);
+
+        var requiredNodes = QuadTree.ExpandNodesToList(_lodZeroScale, _lodDistances, camInfo);
 
         var toUnload = QuadTree.Diff(requiredNodes, _loadedNodes);
         var toLoad = QuadTree.Diff(_loadedNodes, requiredNodes);
@@ -139,7 +146,7 @@ public class TerrainSystem : MonoBehaviour {
 
         for (int i = 0; i < toLoad.Count; i++) {
             var lodNodes = toLoad[i];
-            var lerpRanges = new Vector4(_lodDistances[i] * 1.33f, _lodDistances[i] * 1.66f);
+            var lerpRanges = new Vector4(_lodDistances[i] * 1.66f, _lodDistances[i] * 2.0f);
 
             for (int j = 0; j < lodNodes.Count; j++) {
                 var node = lodNodes[j];
@@ -186,34 +193,10 @@ public class TerrainSystem : MonoBehaviour {
 	    return tile;
 	}
 
-    private static Texture2D GenerateHeightmapFlat(int resolution) {
-        var heightmap = new Texture2D(resolution, resolution, TextureFormat.ARGB32, false, true);
-        for (int x = 0; x < resolution; x++) {
-            for (int y = 0; y < resolution; y++) {
-                float height = 0f;
-                heightmap.SetPixel(x, y, new Color(height, height, height, 1f));
-            }
-        }
-        heightmap.Apply(false);
-        return heightmap;
-    }
-
-    private static Texture2D GenerateHeightmapSine(int resolution) {
-        var heightmap = new Texture2D(resolution, resolution, TextureFormat.ARGB32, false, true);
-        for (int x = 0; x < resolution; x++) {
-            for (int y = 0; y < resolution; y++) {
-                float height = Mathf.Sin(x/(float) resolution*Mathf.PI)*Mathf.Sin(y/(float) resolution*Mathf.PI);
-                heightmap.SetPixel(x, y, new Color(height, height, height, 1f));
-            }
-        }
-        heightmap.Apply(false);
-        return heightmap;
-    }
-
     private static void GenerateTileFractal(Color[] heights, Color[] normals, int numVerts, RidgeNoise noise, Vector3 position, float scale, float heightScale) {
         noise.Frequency = 0.001f;
-        noise.Exponent = .66f;
-        noise.Gain = 2f;
+        noise.Exponent = 0.5f;
+        noise.Gain = 1f;
 
         float stepSize = scale / (numVerts-1);
 
@@ -243,7 +226,16 @@ public class TerrainSystem : MonoBehaviour {
     }
 
     private void OnDrawGizmos() {
-        var nodes = QuadTree.ExpandNodesToList(_lodZeroScale, QuadTree.GetLodDistances(_numLods, _lodZeroRange), CameraInfo.Create(_camera));
+        var camInfo = CameraInfo.Create(_camera);
+//        var camInfo = new CameraInfo();
+//        camInfo.FrustumPlanes = GeometryUtility.CalculateFrustumPlanes(_camera);
+//        camInfo.Position = new Vector3(_camera.transform.position.x, 0f, _camera.transform.position.z);
+
+        var nodes = QuadTree.ExpandNodesToList(_lodZeroScale, QuadTree.GetLodDistances(_numLods, _lodZeroRange), camInfo);
         QuadTree.DrawSelectedNodes(nodes);
-    }
+
+        Gizmos.color = Color.magenta;
+        Gizmos.DrawRay(camInfo.Position, Vector3.up * 1000f);
+        Gizmos.DrawSphere(camInfo.Position, 1f);
+    } 
 }
