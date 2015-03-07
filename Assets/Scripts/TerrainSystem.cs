@@ -117,7 +117,7 @@ public class TerrainSystem : MonoBehaviour {
 //        camInfo.FrustumPlanes = GeometryUtility.CalculateFrustumPlanes(_camera);
 //        camInfo.Position = new Vector3(_camera.transform.position.x, 0f, _camera.transform.position.z);
 
-        var requiredNodes = QuadTree.ExpandNodesToList(_lodZeroScale, _lodDistances, camInfo);
+        var requiredNodes = QuadTree.ExpandNodesToList(Vector3.zero, _lodZeroScale, _lodDistances, camInfo);
 
         var toUnload = QuadTree.Diff(requiredNodes, _loadedNodes);
         var toLoad = QuadTree.Diff(_loadedNodes, requiredNodes);
@@ -231,7 +231,7 @@ public class TerrainSystem : MonoBehaviour {
 //        camInfo.FrustumPlanes = GeometryUtility.CalculateFrustumPlanes(_camera);
 //        camInfo.Position = new Vector3(_camera.transform.position.x, 0f, _camera.transform.position.z);
 
-        var nodes = QuadTree.ExpandNodesToList(_lodZeroScale, QuadTree.GetLodDistances(_numLods, _lodZeroRange), camInfo);
+        var nodes = QuadTree.ExpandNodesToList(Vector3.zero, _lodZeroScale, QuadTree.GetLodDistances(_numLods, _lodZeroRange), camInfo);
         QuadTree.DrawSelectedNodes(nodes);
 
         Gizmos.color = Color.magenta;

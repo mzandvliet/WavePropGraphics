@@ -40,9 +40,8 @@ public static class QuadTree {
     /* This does two things: expand the quadtree based on distance rule and culling, and parses the results
      * to a handy to use list for streaming. Could be two separate functions, but that would be less speedy
      */
-    public static IList<IList<QTNode>> ExpandNodesToList(float lodZeroSize, float[] lodDistances, CameraInfo cam) {
-        Vector3 rootPosition = Vector3.zero;
-        var root = new QTNode(null, rootPosition, lodZeroSize);
+    public static IList<IList<QTNode>> ExpandNodesToList(Vector3 rootPosition, float lodZeroSize, float[] lodDistances, CameraInfo cam) {
+        var root = new QTNode(rootPosition, lodZeroSize);
 
         IList<IList<QTNode>> selectedNodes = new List<IList<QTNode>>(lodDistances.Length);
         for (int i = 0; i < lodDistances.Length; i++) {
@@ -139,13 +138,13 @@ public static class QuadTree {
 }
 
 public class QTNode {
-    public QTNode Parent { get; private set; }
     public QTNode[] Children { get; private set; }
-    public Vector3 Center { get; private set; }
+    public Vector2 Center { get; private set; }
     public float Size { get; private set; }
+    public float Bottom { get; private set; }
+    public float Top { get; private set; }
 
-    public QTNode(QTNode parent, Vector3 center, float size) {
-        Parent = parent;
+    public QTNode(Vector2 center, float size) {
         Center = center;
         Size = size;
     }
@@ -154,13 +153,45 @@ public class QTNode {
         Children = new QTNode[4];
         float halfSize = Size*0.5f;
         float quarterSize = Size*0.25f;
-        Children[0] = new QTNode(this, Center + new Vector3(-quarterSize, 0f, -quarterSize), halfSize);
-        Children[1] = new QTNode(this, Center + new Vector3(-quarterSize, 0f, quarterSize), halfSize);
-        Children[2] = new QTNode(this, Center + new Vector3(quarterSize, 0f, quarterSize), halfSize);
-        Children[3] = new QTNode(this, Center + new Vector3(quarterSize, 0f, -quarterSize), halfSize);
+        Children[0] = new QTNode(Center + new Vector2(-quarterSize, -quarterSize), halfSize);
+        Children[1] = new QTNode(Center + new Vector2(-quarterSize,  quarterSize), halfSize);
+        Children[2] = new QTNode(Center + new Vector2( quarterSize,  quarterSize), halfSize);
+        Children[3] = new QTNode(Center + new Vector2( quarterSize, -quarterSize), halfSize);
     }
 
-    // Todo: decide whether QTNode is a reference or value type. This is just weird.
+    /// <summary>
+    /// Estimates node bounding box by taking scattered heightfield samples.
+    /// </summary>
+    /// <param name="heightFunc">The func definining the heightfield, which can be sampled at arbitrary worldspace points</param>
+    /// <param name="random">Random object used for sampling</param>
+    public void GenerateBoundingBox(Func<Vector2, float> heightFunc, System.Random random) {
+        const int NumHeightSamples = 16;
+
+        /* Todo: could sample four corners, midpoint, and several random samples. Maybe random isn't even needed?
+         * Can also assume that sub-tile height range is always smaller than parent-tile's.
+         */
+
+        float highest = float.MinValue;
+        float lowest = float.MaxValue;
+        for (int i = 0; i < NumHeightSamples; i++) {
+            float height = heightFunc(Center);
+            if (height > highest) {
+                highest = height;
+            } else if(height < lowest) {
+                lowest = height;
+            }
+        }
+
+        Top = highest;
+        Bottom = lowest;
+    }
+
+    /*
+     * Todo: decide whether QTNode is a reference or value type. This is just weird.
+     * 
+     * It will be a reference type, as payloads are becoming non-trivial, and we want to
+     * minimize garbage.
+     */
 
     protected bool Equals(QTNode other) {
         return Center == other.Center && Math.Abs(Size - other.Size) < float.Epsilon;
