@@ -35,8 +35,8 @@
 			struct v2f {
 				float4 pos : POSITION;
 				float3 lightDir : TEXCOORD0;
-				float3 normal : TEXCOORD1;
-				float2 uv : TEXCOORD2;
+				float2 uv : TEXCOORD1;
+				float3 normal : TEXCOORD2;
 				float3 viewDir : TEXCOORD3;
 				float flogz : TEXCOORD4;
 				LIGHTING_COORDS(5, 6)
@@ -78,8 +78,6 @@
 				return vertex - (fracPart  / g_resolution * lerp);
 			}
 
-			//float3 getNormal(sampler2D heights, )
-
 			v2f vert (appdata_base v) {
 				v2f o;
 
@@ -103,7 +101,7 @@
 				wsVertex = mul(_Object2World, wsVertex); // Morphed vertex to world space
 
 				// Sample height using morphed local unit space
-				float4 height = tex2Dlod(_HeightTex, float4(morphedVertex.x, morphedVertex.y, 0, 0));
+				float4 height = tex2Dlod_bilinear(_HeightTex, float4(morphedVertex.x, morphedVertex.y, 0, 0));
 				wsVertex.y = height.r * _HeightScale;
 
 				// To clip space
@@ -112,9 +110,9 @@
 				//o.flogz = TransformVertexLog(o.pos);
 
 				o.lightDir = normalize(ObjSpaceLightDir(v.vertex));
-				//float3 norm = UnpackNormal(tex2D (_NormalTex, morphedVertex));
-				o.normal = float3(0,1,0);
-				//o.normal = norm;//float3(0,0,0);
+
+				float3 normalColor = tex2Dlod_bilinear(_NormalTex, float4(morphedVertex,0,0)).xyz;
+				o.normal = normalColor;//(normalColor * 2.0) - float3(1,1,1);
 
 				TRANSFER_VERTEX_TO_FRAGMENT(o);
 

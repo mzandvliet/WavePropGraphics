@@ -69,6 +69,8 @@ public class TerrainSystem : MonoBehaviour {
         }
 
         _activeMeshes = new Dictionary<QTNode, TerrainTile>();
+
+        //DrawTestTerrain();
     }
 
     /*
@@ -154,7 +156,7 @@ public class TerrainSystem : MonoBehaviour {
                 _activeMeshes.Add(node, mesh);
 
                 Vector3 scale = Vector3.one*node.Size;
-                Vector3 position = node.Center - (new Vector3(node.Size*0.5f, 0f, node.Size*0.5f));
+                Vector3 position = new Vector3(node.Center.x - node.Size * 0.5f, 0f, node.Center.y - node.Size * 0.5f);
 
                 mesh.Transform.position = position;
                 mesh.Transform.localScale = scale;
@@ -207,15 +209,20 @@ public class TerrainSystem : MonoBehaviour {
                 float height = noise.GetValue(position.x + x * stepSize, position.z + z * stepSize, 0) * 0.5f;
                 heights[index] = new Color(height, height, height, height);
 
-                float heightL = 0.5f + noise.GetValue(position.x + (x - 1) * stepSize, position.z + z * stepSize, 0) * 0.25f;
-                float heightR = 0.5f + noise.GetValue(position.x + (x + 1) * stepSize, position.z + z * stepSize, 0) * 0.25f;
-                float heightB = 0.5f + noise.GetValue(position.x + x * stepSize, position.z + (z - 1) * stepSize, 0) * 0.25f;
-                float heightT = 0.5f + noise.GetValue(position.x + x * stepSize, position.z + (z + 1) * stepSize, 0) * 0.25f;
+                float heightL = noise.GetValue(position.x + (x - 1) * stepSize, position.z + z          * stepSize, 0) * 0.5f;
+                float heightR = noise.GetValue(position.x + (x + 1) * stepSize, position.z + z          * stepSize, 0) * 0.5f;
+                float heightB = noise.GetValue(position.x + x       * stepSize, position.z + (z - 1)    * stepSize, 0) * 0.5f;
+                float heightT = noise.GetValue(position.x + x       * stepSize, position.z + (z + 1)    * stepSize, 0) * 0.5f;
 
-                Vector3 lr = new Vector3(2f * stepSize, (heightR - heightL) * heightScale, 0f);
-                Vector3 bt = new Vector3(2f * stepSize, (heightT - heightB) * heightScale, 0f);
-                Vector3 normal = Vector3.Cross(lr, bt).normalized;
-                normals[index] = new Color(normal.x, normal.y, normal.z, 1f);
+                // Todo: the below is in tile-local units, should be world units
+                Vector3 lr = new Vector3(1f / (numVerts-1), (heightR - heightL), 0f).normalized;
+                Vector3 bt = new Vector3(0f, (heightT - heightB), 1f / (numVerts - 1)).normalized;
+                Vector3 normal = Vector3.Cross(lr, bt);
+                normals[index] = new Color(
+                    0.5f + normal.x * 0.5f,
+                    0.5f + normal.y * 0.5f,
+                    0.5f + normal.z * 0.5f,
+                    1f);
             }
         }
     }
@@ -237,5 +244,44 @@ public class TerrainSystem : MonoBehaviour {
         Gizmos.color = Color.magenta;
         Gizmos.DrawRay(camInfo.Position, Vector3.up * 1000f);
         Gizmos.DrawSphere(camInfo.Position, 1f);
-    } 
+    }
+
+    private TerrainTile _testTile;
+
+    private void DrawTestTerrain() {
+        int numVerts = _tileResolution + 1;
+        Color[] heights = new Color[numVerts * numVerts];
+        Color[] normals = new Color[numVerts * numVerts];
+
+        if (_noise == null) {
+            _noise = new RidgeNoise(1234);
+        }
+
+        if (_testTile == null) {
+            _testTile = CreateTile(16, _material);
+        }
+
+        Vector3 scale = Vector3.one * 256f;
+        Vector3 position = Vector3.zero;
+
+        _testTile.Transform.position = position;
+        _testTile.Transform.localScale = scale;
+        _testTile.MeshRenderer.material.SetFloat("_Scale", scale.x);
+        _testTile.MeshRenderer.material.SetFloat("_HeightScale", 256f);
+        _testTile.MeshRenderer.material.SetVector("_LerpRanges", new Vector2(128f, 256f));
+
+        GenerateTileFractal(heights, normals, numVerts, _noise, position, 256f, 256f);
+
+        var heightmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false);
+        var normalmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false);
+        heightmap.wrapMode = TextureWrapMode.Clamp;
+        normalmap.wrapMode = TextureWrapMode.Clamp;
+        LoadHeightsToTexture(heights, heightmap);
+        LoadHeightsToTexture(normals, normalmap);
+        _testTile.MeshRenderer.material.SetTexture("_HeightTex", heightmap);
+        _testTile.MeshRenderer.material.SetTexture("_NormalTex", normalmap);
+
+        _testTile.gameObject.name = "Terrain_NormalTest";
+        _testTile.gameObject.SetActive(true);
+    }
 }

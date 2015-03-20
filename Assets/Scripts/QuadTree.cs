@@ -82,11 +82,12 @@ public static class QuadTree {
     // Todo: optimize
     private static bool Intersect(QTNode node, CameraInfo camInfo, float range) {
         float halfSize = node.Size*0.5f;
-        return
-            Vector3.Distance(node.Center + new Vector3(-halfSize, 256f, -halfSize), camInfo.Position) < range ||
-            Vector3.Distance(node.Center + new Vector3(-halfSize, 256f, halfSize), camInfo.Position) < range ||
-            Vector3.Distance(node.Center + new Vector3(halfSize, 256f, -halfSize), camInfo.Position) < range ||
-            Vector3.Distance(node.Center + new Vector3(halfSize, 256f, halfSize), camInfo.Position) < range;
+        return false;
+//        return
+//            Vector3.Distance(node.Center + new Vector3(-halfSize, 256f, -halfSize), camInfo.Position) < range ||
+//            Vector3.Distance(node.Center + new Vector3(-halfSize, 256f, halfSize), camInfo.Position) < range ||
+//            Vector3.Distance(node.Center + new Vector3(halfSize, 256f, -halfSize), camInfo.Position) < range ||
+//            Vector3.Distance(node.Center + new Vector3(halfSize, 256f, halfSize), camInfo.Position) < range;
     }
 
     private static bool IntersectFrustum(CameraInfo info, QTNode node) {
