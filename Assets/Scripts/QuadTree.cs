@@ -44,7 +44,7 @@ public static class QuadTree {
         Vector3 lodZeroSize,
         float[] lodDistances,
         CameraInfo cam,
-        HeightSamplingTools heightTools) {
+        IHeightSampler sampler) {
         var root = new QTNode(rootPosition, lodZeroSize);
 
         IList<IList<QTNode>> selectedNodes = new List<IList<QTNode>>(lodDistances.Length);
@@ -52,7 +52,7 @@ public static class QuadTree {
             selectedNodes.Add(new List<QTNode>());
         }
 
-        ExpandNodeRecursively(0, root, cam, lodDistances, selectedNodes, heightTools);
+        ExpandNodeRecursively(0, root, cam, lodDistances, selectedNodes, sampler);
 
         return selectedNodes;
     }
@@ -65,7 +65,7 @@ public static class QuadTree {
         CameraInfo cam,
         float[] lodDistances,
         IList<IList<QTNode>> selectedNodes,
-        HeightSamplingTools heightTools) {
+        IHeightSampler sampler) {
         // If we're at the deepest lod level, no need to expand further
         if (currentLod == lodDistances.Length-1) {
             selectedNodes[currentLod].Add(node);
@@ -75,11 +75,11 @@ public static class QuadTree {
         // If not, we should create children if we're in LOD range
         if (Intersect(node, cam, lodDistances[currentLod])) {
             if (node.Children == null) {
-                node.CreateChildren(heightTools);
+                node.CreateChildren(sampler);
             }
 
             for (int i = 0; i < node.Children.Length; i++) {
-                ExpandNodeRecursively(currentLod + 1, node.Children[i], cam, lodDistances, selectedNodes, heightTools);
+                ExpandNodeRecursively(currentLod + 1, node.Children[i], cam, lodDistances, selectedNodes, sampler);
             }
             return;
         }
@@ -175,40 +175,34 @@ public class QTNode {
         Size = size;
     }
 
-    public void CreateChildren(HeightSamplingTools heightTools) {
+    public void CreateChildren(IHeightSampler sampler) {
         Children = new QTNode[4];
         float halfSize = Size.x*0.5f;
 
         Children[0] = new QTNode(Position + new Vector3(0f, 0f, 0f), new Vector3(halfSize, 0f, halfSize));
         Children[1] = new QTNode(Position + new Vector3(0f, 0f, halfSize), new Vector3(halfSize, 0f, halfSize));
         Children[2] = new QTNode(Position + new Vector3(halfSize, 0f, halfSize), new Vector3(halfSize, 0f, halfSize));
-        Children[3] = new QTNode(Position + new Vector3(halfSize, 0f, -0f), new Vector3(halfSize, 0f, halfSize));
+        Children[3] = new QTNode(Position + new Vector3(halfSize, 0f, 0f), new Vector3(halfSize, 0f, halfSize));
 
         for (int i = 0; i < 4; i++) {
-            Children[i].GenerateBoundingHeights(heightTools);
+            Children[i].FitHeightSamples(sampler);
         }
     }
 
     /// <summary>
     /// Estimates node bounding box by taking scattered heightfield samples.
     /// </summary>
-    /// <param name="heightFunc">The func definining the heightfield, which can be sampled at arbitrary worldspace points</param>
-    /// <param name="random">Random object used for sampling</param>
-    private void GenerateBoundingHeights(HeightSamplingTools heightTools) {
-        const int numHeightSamples = 4;
-
-        /* Todo: could sample four corners, midpoint, and several random samples. Maybe random isn't even needed?
-         * Can also note that sub-tile height range is always smaller than parent-tile's.
-         */
+    private void FitHeightSamples(IHeightSampler sampler) {
+        const int samplingResolution = 4;
 
         float highest = float.MinValue;
         float lowest = float.MaxValue;
 
-        for (int x = 0; x < numHeightSamples; x++) {
-            for (int y = 0; y < numHeightSamples; y++) {
-                float posX = _position.x + (x / (float) numHeightSamples) * Size.x;
-                float posY = _position.y + (y / (float) numHeightSamples) * Size.y;
-                float height = heightTools.Sampler.Sample(posX, posY) * 512f; // Todo: get height scale from config, obv.
+        for (int x = 0; x < samplingResolution; x++) {
+            for (int z = 0; z < samplingResolution; z++) {
+                float posX = _position.x + (x / (float) samplingResolution) * Size.x;
+                float posZ = _position.y + (z / (float) samplingResolution) * Size.z;
+                float height = sampler.Sample(posX, posZ) * 512f; // Todo: get height scale from config, obv.
                 
                 if (height > highest) {
                     highest = height;
@@ -218,21 +212,7 @@ public class QTNode {
             }
         }
 
-//        for (int i = 0; i < numHeightSamples; i++) {
-//            Vector2 pos = new Vector2(
-//                _position.x + (float)heightTools.Random.NextDouble() * Size.x,
-//                _position.z + (float)heightTools.Random.NextDouble() * Size.z);
-//
-//            float height = heightTools.Sampler.Sample(pos.x, pos.y) * 512f; // Todo: get height scale from config, obv.
-//
-//            if (height > highest) {
-//                highest = height;
-//            } else if(height < lowest) {
-//                lowest = height;
-//            }
-//        }
-
-        _position.y = lowest + highest*0.5f;
+        _position.y = lowest;
         _size.y = highest - lowest;
     }
 
