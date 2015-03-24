@@ -161,13 +161,6 @@ public class QTNode {
 
     public Vector3 Center { get { return Position + Size * 0.5f; } }
     
-    public float Left { get { return Center.x - Size.x * 0.5f; } }
-    public float Right { get { return Center.x + Size.x * 0.5f; } }
-    public float Bottom { get { return Center.y - Size.y * 0.5f; } }
-    public float Top { get { return Center.y + Size.y * 0.5f; } }
-    public float Back { get { return Center.z - Size.z * 0.5f; } }
-    public float Front { get { return Center.z + Size.z * 0.5f; } }
-
     public QTNode[] Children { get; private set; }
 
     public QTNode(Vector3 position, Vector3 size) {
@@ -184,7 +177,7 @@ public class QTNode {
         Children[2] = new QTNode(Position + new Vector3(halfSize, 0f, halfSize), new Vector3(halfSize, 0f, halfSize));
         Children[3] = new QTNode(Position + new Vector3(halfSize, 0f, 0f), new Vector3(halfSize, 0f, halfSize));
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < Children.Length; i++) {
             Children[i].FitHeightSamples(sampler);
         }
     }
@@ -193,6 +186,8 @@ public class QTNode {
     /// Estimates node bounding box by taking scattered heightfield samples.
     /// </summary>
     private void FitHeightSamples(IHeightSampler sampler) {
+        /* Todo: move this logic out of this class, too much business going on */
+
         const int samplingResolution = 4;
 
         float highest = float.MinValue;
@@ -201,7 +196,7 @@ public class QTNode {
         for (int x = 0; x < samplingResolution; x++) {
             for (int z = 0; z < samplingResolution; z++) {
                 float posX = _position.x + (x / (float) samplingResolution) * Size.x;
-                float posZ = _position.y + (z / (float) samplingResolution) * Size.z;
+                float posZ = _position.z + (z / (float) samplingResolution) * Size.z;
                 float height = sampler.Sample(posX, posZ) * 512f; // Todo: get height scale from config, obv.
                 
                 if (height > highest) {
