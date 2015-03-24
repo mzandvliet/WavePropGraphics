@@ -39,7 +39,12 @@ public static class QuadTree {
     /* This does two things: expand the quadtree based on distance rule and culling, and parses the results
      * to a handy to use list for streaming. Could be two separate functions, but that would be less speedy
      */
-    public static IList<IList<QTNode>> ExpandNodesToList(Vector3 rootPosition, float lodZeroSize, float[] lodDistances, CameraInfo cam) {
+    public static IList<IList<QTNode>> ExpandNodesToList(
+        Vector3 rootPosition,
+        Vector3 lodZeroSize,
+        float[] lodDistances,
+        CameraInfo cam,
+        HeightSamplingTools heightTools) {
         var root = new QTNode(rootPosition, lodZeroSize);
 
         IList<IList<QTNode>> selectedNodes = new List<IList<QTNode>>(lodDistances.Length);
@@ -47,14 +52,20 @@ public static class QuadTree {
             selectedNodes.Add(new List<QTNode>());
         }
 
-        ExpandNodeRecursively(0, root, cam, lodDistances, selectedNodes);
+        ExpandNodeRecursively(0, root, cam, lodDistances, selectedNodes, heightTools);
 
         return selectedNodes;
     }
 
     // Todo: partial child expansion (needs parent mesh partial vertex enable/disable)
     // Todo: optimize
-    public static void ExpandNodeRecursively(int currentLod, QTNode node, CameraInfo cam, float[] lodDistances, IList<IList<QTNode>> selectedNodes) {
+    public static void ExpandNodeRecursively(
+        int currentLod,
+        QTNode node,
+        CameraInfo cam,
+        float[] lodDistances,
+        IList<IList<QTNode>> selectedNodes,
+        HeightSamplingTools heightTools) {
         // If we're at the deepest lod level, no need to expand further
         if (currentLod == lodDistances.Length-1) {
             selectedNodes[currentLod].Add(node);
@@ -64,11 +75,11 @@ public static class QuadTree {
         // If not, we should create children if we're in LOD range
         if (Intersect(node, cam, lodDistances[currentLod])) {
             if (node.Children == null) {
-                node.CreateChildren();
+                node.CreateChildren(heightTools);
             }
 
             for (int i = 0; i < node.Children.Length; i++) {
-                ExpandNodeRecursively(currentLod + 1, node.Children[i], cam, lodDistances, selectedNodes);
+                ExpandNodeRecursively(currentLod + 1, node.Children[i], cam, lodDistances, selectedNodes, heightTools);
             }
             return;
         }
@@ -80,17 +91,21 @@ public static class QuadTree {
     // Todo: this check should be 3D, using QTNode min/max height, but is only on the horizontal plane right now
     // Todo: optimize
     private static bool Intersect(QTNode node, CameraInfo camInfo, float range) {
-        float halfSize = node.Size*0.5f;
-        float sqrRange = range*range;
-        return
-            SqrDistance(node.Center + new Vector3(-halfSize, 0f, -halfSize), camInfo.Position) < sqrRange ||
-            SqrDistance(node.Center + new Vector3(-halfSize, 0f,  halfSize), camInfo.Position) < sqrRange ||
-            SqrDistance(node.Center + new Vector3( halfSize, 0f, -halfSize), camInfo.Position) < sqrRange ||
-            SqrDistance(node.Center + new Vector3( halfSize, 0f,  halfSize), camInfo.Position) < sqrRange;
+        return Intersect(node.Position, node.Position + node.Size, camInfo.Position, range);
     }
 
-    private static float SqrDistance(Vector3 a, Vector3 b) {
-        return (b - a).sqrMagnitude;
+    private static bool Intersect(Vector3 bMin, Vector3 bMax, Vector3 c, float r) {
+        float sqrDist = r*r;
+        float minDist = 0f;
+        for (int i = 0; i < 3; i++) {
+            if (c[i] < bMin[i]) minDist += Square(c[i] - bMax[i]);
+            else if (c[i] > bMax[i]) minDist += Square(c[i] - bMax[i]);
+        }
+        return minDist <= sqrDist;
+    }
+
+    private static float Square(float val) {
+        return val*val;
     }
 
     private static bool IntersectFrustum(CameraInfo info, QTNode node) {
@@ -132,36 +147,46 @@ public static class QuadTree {
         }
     }
 
-    private static void DrawQuad(Vector3 center, float size) {
-        float halfSize = size * 0.5f;
-        Gizmos.DrawRay(center - Vector3.right * halfSize - Vector3.forward * halfSize, Vector3.forward * size);
-        Gizmos.DrawRay(center - Vector3.right * halfSize + Vector3.forward * halfSize, Vector3.right * size);
-        Gizmos.DrawRay(center + Vector3.right * halfSize + Vector3.forward * halfSize, Vector3.back * size);
-        Gizmos.DrawRay(center + Vector3.right * halfSize - Vector3.forward * halfSize, Vector3.left * size);
+    private static void DrawQuad(Vector3 center, Vector3 size) {
+        Gizmos.DrawWireCube(center, size);
     }
 }
 
 public class QTNode {
-    public QTNode[] Children { get; private set; }
-    public Vector3 Center { get; private set; }
-    public float Size { get; private set; }
-    public float Bottom { get; private set; }
-    public float Top { get; private set; }
+    private Vector3 _position;
+    private Vector3 _size;
 
-    public QTNode(Vector3 center, float size) {
-        Center = center;
+    public Vector3 Position { get { return _position; } set { _position = value; } }
+    public Vector3 Size { get { return _size; } set { _size = value; } }
+
+    public Vector3 Center { get { return Position + Size * 0.5f; } }
+    
+    public float Left { get { return Center.x - Size.x * 0.5f; } }
+    public float Right { get { return Center.x + Size.x * 0.5f; } }
+    public float Bottom { get { return Center.y - Size.y * 0.5f; } }
+    public float Top { get { return Center.y + Size.y * 0.5f; } }
+    public float Back { get { return Center.z - Size.z * 0.5f; } }
+    public float Front { get { return Center.z + Size.z * 0.5f; } }
+
+    public QTNode[] Children { get; private set; }
+
+    public QTNode(Vector3 position, Vector3 size) {
+        Position = position;
         Size = size;
     }
 
-    public void CreateChildren() {
+    public void CreateChildren(HeightSamplingTools heightTools) {
         Children = new QTNode[4];
-        float halfSize = Size*0.5f;
-        float quarterSize = Size*0.25f;
+        float halfSize = Size.x*0.5f;
 
-        Children[0] = new QTNode(Center + new Vector3(-quarterSize, 0f, -quarterSize), halfSize);
-        Children[1] = new QTNode(Center + new Vector3(-quarterSize, 0f, quarterSize), halfSize);
-        Children[2] = new QTNode(Center + new Vector3(quarterSize, 0f, quarterSize), halfSize);
-        Children[3] = new QTNode(Center + new Vector3(quarterSize, 0f, -quarterSize), halfSize);
+        Children[0] = new QTNode(Position + new Vector3(0f, 0f, 0f), new Vector3(halfSize, 0f, halfSize));
+        Children[1] = new QTNode(Position + new Vector3(0f, 0f, halfSize), new Vector3(halfSize, 0f, halfSize));
+        Children[2] = new QTNode(Position + new Vector3(halfSize, 0f, halfSize), new Vector3(halfSize, 0f, halfSize));
+        Children[3] = new QTNode(Position + new Vector3(halfSize, 0f, -0f), new Vector3(halfSize, 0f, halfSize));
+
+        for (int i = 0; i < 4; i++) {
+            Children[i].GenerateBoundingHeights(heightTools);
+        }
     }
 
     /// <summary>
@@ -169,27 +194,46 @@ public class QTNode {
     /// </summary>
     /// <param name="heightFunc">The func definining the heightfield, which can be sampled at arbitrary worldspace points</param>
     /// <param name="random">Random object used for sampling</param>
-    public void GenerateBoundingBox(Func<Vector2, float> heightFunc, System.Random random) {
-        const int NumHeightSamples = 16;
+    private void GenerateBoundingHeights(HeightSamplingTools heightTools) {
+        const int numHeightSamples = 4;
 
         /* Todo: could sample four corners, midpoint, and several random samples. Maybe random isn't even needed?
-         * Can also assume that sub-tile height range is always smaller than parent-tile's.
+         * Can also note that sub-tile height range is always smaller than parent-tile's.
          */
 
         float highest = float.MinValue;
         float lowest = float.MaxValue;
 
-        for (int i = 0; i < NumHeightSamples; i++) {
-            float height = heightFunc(Center);
-            if (height > highest) {
-                highest = height;
-            } else if(height < lowest) {
-                lowest = height;
+        for (int x = 0; x < numHeightSamples; x++) {
+            for (int y = 0; y < numHeightSamples; y++) {
+                float posX = _position.x + (x / (float) numHeightSamples) * Size.x;
+                float posY = _position.y + (y / (float) numHeightSamples) * Size.y;
+                float height = heightTools.Sampler.Sample(posX, posY) * 512f; // Todo: get height scale from config, obv.
+                
+                if (height > highest) {
+                    highest = height;
+                } else if(height < lowest) {
+                    lowest = height;
+                }
             }
         }
 
-        Top = highest;
-        Bottom = lowest;
+//        for (int i = 0; i < numHeightSamples; i++) {
+//            Vector2 pos = new Vector2(
+//                _position.x + (float)heightTools.Random.NextDouble() * Size.x,
+//                _position.z + (float)heightTools.Random.NextDouble() * Size.z);
+//
+//            float height = heightTools.Sampler.Sample(pos.x, pos.y) * 512f; // Todo: get height scale from config, obv.
+//
+//            if (height > highest) {
+//                highest = height;
+//            } else if(height < lowest) {
+//                lowest = height;
+//            }
+//        }
+
+        _position.y = lowest + highest*0.5f;
+        _size.y = highest - lowest;
     }
 
     /*
@@ -200,7 +244,7 @@ public class QTNode {
      */
 
     protected bool Equals(QTNode other) {
-        return Center == other.Center && Math.Abs(Size - other.Size) < float.Epsilon;
+        return _position.Equals(other._position) && _size.Equals(other._size);
     }
 
     public override bool Equals(object obj) {
@@ -218,7 +262,7 @@ public class QTNode {
 
     public override int GetHashCode() {
         unchecked {
-            return (Center.GetHashCode()*397) ^ Size.GetHashCode();
+            return (_position.GetHashCode()*397) ^ _size.GetHashCode();
         }
     }
 }

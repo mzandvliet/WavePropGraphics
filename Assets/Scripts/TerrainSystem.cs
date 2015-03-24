@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using CoherentNoise.Generation.Fractal;
 using UnityEngine;
 
@@ -47,11 +48,10 @@ public class TerrainSystem : MonoBehaviour {
     private IDictionary<QTNode, TerrainTile> _activeMeshes;  
     private IList<IList<QTNode>> _loadedNodes;
 
-    private RidgeNoise _noise;
+
+    private HeightSamplingTools _heightTools;
 
     void Awake() {
-        _noise = new RidgeNoise(1234);
-
         _lodDistances = QuadTree.GetLodDistances(_numLods, _lodZeroRange);
 
         _loadedNodes = new List<IList<QTNode>>();
@@ -62,6 +62,11 @@ public class TerrainSystem : MonoBehaviour {
         CreatePooledTiles();
 
         _activeMeshes = new Dictionary<QTNode, TerrainTile>();
+
+        _heightTools = new HeightSamplingTools() {
+            Sampler = new FractalHeightSampler(),
+            Random = new System.Random()
+        };
 
         //DrawTestTerrain();
     }
@@ -123,7 +128,9 @@ public class TerrainSystem : MonoBehaviour {
 //        camInfo.FrustumPlanes = GeometryUtility.CalculateFrustumPlanes(_camera);
 //        camInfo.Position = new Vector3(_camera.transform.position.x, 0f, _camera.transform.position.z);
 
-        var requiredNodes = QuadTree.ExpandNodesToList(Vector3.zero, _lodZeroScale, _lodDistances, camInfo);
+        var bMin = new Vector3(-_lodZeroScale * 0.5f, 0f, -_lodZeroScale * 0.5f);
+        var lodZeroScale = new Vector3(_lodZeroScale, _heightScale, _lodZeroScale);
+        var requiredNodes = QuadTree.ExpandNodesToList(bMin, lodZeroScale, _lodDistances, camInfo, _heightTools);
 
         var toUnload = QuadTree.Diff(requiredNodes, _loadedNodes);
         var toLoad = QuadTree.Diff(_loadedNodes, requiredNodes);
@@ -159,16 +166,15 @@ public class TerrainSystem : MonoBehaviour {
                 var mesh = _meshPool.Pop();
                 _activeMeshes.Add(node, mesh);
 
-                Vector3 scale = Vector3.one*node.Size;
-                Vector3 position = new Vector3(node.Center.x - node.Size * 0.5f, 0f, node.Center.z - node.Size * 0.5f);
+                Vector3 position = new Vector3(node.Center.x - node.Size.x * 0.5f, 0f, node.Center.z - node.Size.z * 0.5f);
 
                 mesh.Transform.position = position;
-                mesh.Transform.localScale = scale;
-                mesh.MeshRenderer.material.SetFloat("_Scale", scale.x);
+                mesh.Transform.localScale = node.Size;
+                mesh.MeshRenderer.material.SetFloat("_Scale", node.Size.x);
                 mesh.MeshRenderer.material.SetFloat("_HeightScale", _heightScale);
                 mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
 
-                GenerateTileFractal(heights, normals, numVerts, _noise, position, node.Size, _heightScale);
+                GenerateTileFractal(heights, normals, numVerts, _heightTools, position, node.Size.x, _heightScale);
 
                 var heightmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false);
                 var normalmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false);
@@ -199,10 +205,8 @@ public class TerrainSystem : MonoBehaviour {
 	    return tile;
 	}
 
-    private static void GenerateTileFractal(Color[] heights, Color[] normals, int numVerts, RidgeNoise noise, Vector3 position, float scale, float heightScale) {
-        noise.Frequency = 0.001f;
-        noise.Exponent = 0.5f;
-        noise.Gain = 1f;
+    private static void GenerateTileFractal(Color[] heights, Color[] normals, int numVerts, HeightSamplingTools tools, Vector3 position, float scale, float heightScale) {
+        
 
         float stepSize = scale / (numVerts-1);
 
@@ -210,13 +214,13 @@ public class TerrainSystem : MonoBehaviour {
             for (int z = 0; z < numVerts; z++) {
                 int index = x + z*numVerts;
 
-                float height = noise.GetValue(position.x + x * stepSize, position.z + z * stepSize, 0) * 0.5f;
+                float height = tools.Sampler.Sample(position.x + x * stepSize, position.z + z * stepSize);
                 heights[index] = new Color(height, height, height, height);
 
-                float heightL = noise.GetValue(position.x + (x - 1) * stepSize, position.z + z          * stepSize, 0) * 0.5f;
-                float heightR = noise.GetValue(position.x + (x + 1) * stepSize, position.z + z          * stepSize, 0) * 0.5f;
-                float heightB = noise.GetValue(position.x + x       * stepSize, position.z + (z - 1)    * stepSize, 0) * 0.5f;
-                float heightT = noise.GetValue(position.x + x       * stepSize, position.z + (z + 1)    * stepSize, 0) * 0.5f;
+                float heightL = tools.Sampler.Sample(position.x + (x - 1) * stepSize, position.z + z * stepSize);
+                float heightR = tools.Sampler.Sample(position.x + (x + 1) * stepSize, position.z + z * stepSize);
+                float heightB = tools.Sampler.Sample(position.x + x * stepSize, position.z + (z - 1) * stepSize);
+                float heightT = tools.Sampler.Sample(position.x + x * stepSize, position.z + (z + 1) * stepSize);
 
                 // Todo: the below is in tile-local units, should be world units
                 Vector3 lr = new Vector3(1f / (numVerts-1), (heightR - heightL), 0f).normalized;
@@ -242,7 +246,16 @@ public class TerrainSystem : MonoBehaviour {
 //        camInfo.FrustumPlanes = GeometryUtility.CalculateFrustumPlanes(_camera);
 //        camInfo.Position = new Vector3(_camera.transform.position.x, 0f, _camera.transform.position.z);
 
-        var nodes = QuadTree.ExpandNodesToList(Vector3.zero, _lodZeroScale, QuadTree.GetLodDistances(_numLods, _lodZeroRange), camInfo);
+        if (_heightTools == null) {
+            _heightTools = new HeightSamplingTools() {
+                Sampler = new FractalHeightSampler(),
+                Random = new System.Random()
+            };
+        }
+
+        var bMin = new Vector3(-_lodZeroScale*0.5f, 0f, -_lodZeroScale*0.5f);
+        var lodZeroScale = new Vector3(_lodZeroScale, _heightScale, _lodZeroScale);
+        var nodes = QuadTree.ExpandNodesToList(bMin, lodZeroScale, QuadTree.GetLodDistances(_numLods, _lodZeroRange), camInfo, _heightTools);
         QuadTree.DrawSelectedNodes(nodes);
 
         Gizmos.color = Color.magenta;
@@ -257,9 +270,10 @@ public class TerrainSystem : MonoBehaviour {
         Color[] heights = new Color[numVerts * numVerts];
         Color[] normals = new Color[numVerts * numVerts];
 
-        if (_noise == null) {
-            _noise = new RidgeNoise(1234);
-        }
+        _heightTools = new HeightSamplingTools() {
+            Sampler = new FractalHeightSampler(),
+            Random = new System.Random()
+        };
 
         if (_testTile == null) {
             _testTile = CreateTile(16, _material);
@@ -274,7 +288,7 @@ public class TerrainSystem : MonoBehaviour {
         _testTile.MeshRenderer.material.SetFloat("_HeightScale", 256f);
         _testTile.MeshRenderer.material.SetVector("_LerpRanges", new Vector2(128f, 256f));
 
-        GenerateTileFractal(heights, normals, numVerts, _noise, position, 256f, 256f);
+        GenerateTileFractal(heights, normals, numVerts, _heightTools, position, 256f, 256f);
 
         var heightmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false);
         var normalmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false);
@@ -288,4 +302,28 @@ public class TerrainSystem : MonoBehaviour {
         _testTile.gameObject.name = "Terrain_NormalTest";
         _testTile.gameObject.SetActive(true);
     }
+}
+
+public interface IHeightSampler {
+    float Sample(float x, float y);
+}
+
+public class FractalHeightSampler : IHeightSampler {
+    private RidgeNoise _noise;
+
+    public FractalHeightSampler() {
+        _noise = new RidgeNoise(1234);
+        _noise.Frequency = 0.001f;
+        _noise.Exponent = 0.5f;
+        _noise.Gain = 1f;
+    }
+
+    public float Sample(float x, float y) {
+        return _noise.GetValue(x, y, 0f) * 0.5f;
+    }
+}
+
+public class HeightSamplingTools {
+    public IHeightSampler Sampler;
+    public System.Random Random;
 }
