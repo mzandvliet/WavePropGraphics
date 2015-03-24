@@ -1,7 +1,6 @@
 ﻿using System;
 using UnityEngine;
 using System.Collections.Generic;
-using System.Runtime.Remoting.Messaging;
 
 /*
  * Just occurred to me: for quadtree traversal and culling the nodes need height information.
@@ -78,16 +77,20 @@ public static class QuadTree {
         selectedNodes[currentLod].Add(node);
     }
 
-    // Todo: this check should be 3D, but is only on the horizontal plane right now
+    // Todo: this check should be 3D, using QTNode min/max height, but is only on the horizontal plane right now
     // Todo: optimize
     private static bool Intersect(QTNode node, CameraInfo camInfo, float range) {
         float halfSize = node.Size*0.5f;
-        return false;
-//        return
-//            Vector3.Distance(node.Center + new Vector3(-halfSize, 256f, -halfSize), camInfo.Position) < range ||
-//            Vector3.Distance(node.Center + new Vector3(-halfSize, 256f, halfSize), camInfo.Position) < range ||
-//            Vector3.Distance(node.Center + new Vector3(halfSize, 256f, -halfSize), camInfo.Position) < range ||
-//            Vector3.Distance(node.Center + new Vector3(halfSize, 256f, halfSize), camInfo.Position) < range;
+        float sqrRange = range*range;
+        return
+            SqrDistance(node.Center + new Vector3(-halfSize, 0f, -halfSize), camInfo.Position) < sqrRange ||
+            SqrDistance(node.Center + new Vector3(-halfSize, 0f,  halfSize), camInfo.Position) < sqrRange ||
+            SqrDistance(node.Center + new Vector3( halfSize, 0f, -halfSize), camInfo.Position) < sqrRange ||
+            SqrDistance(node.Center + new Vector3( halfSize, 0f,  halfSize), camInfo.Position) < sqrRange;
+    }
+
+    private static float SqrDistance(Vector3 a, Vector3 b) {
+        return (b - a).sqrMagnitude;
     }
 
     private static bool IntersectFrustum(CameraInfo info, QTNode node) {
@@ -140,12 +143,12 @@ public static class QuadTree {
 
 public class QTNode {
     public QTNode[] Children { get; private set; }
-    public Vector2 Center { get; private set; }
+    public Vector3 Center { get; private set; }
     public float Size { get; private set; }
     public float Bottom { get; private set; }
     public float Top { get; private set; }
 
-    public QTNode(Vector2 center, float size) {
+    public QTNode(Vector3 center, float size) {
         Center = center;
         Size = size;
     }
@@ -154,10 +157,11 @@ public class QTNode {
         Children = new QTNode[4];
         float halfSize = Size*0.5f;
         float quarterSize = Size*0.25f;
-        Children[0] = new QTNode(Center + new Vector2(-quarterSize, -quarterSize), halfSize);
-        Children[1] = new QTNode(Center + new Vector2(-quarterSize,  quarterSize), halfSize);
-        Children[2] = new QTNode(Center + new Vector2( quarterSize,  quarterSize), halfSize);
-        Children[3] = new QTNode(Center + new Vector2( quarterSize, -quarterSize), halfSize);
+
+        Children[0] = new QTNode(Center + new Vector3(-quarterSize, 0f, -quarterSize), halfSize);
+        Children[1] = new QTNode(Center + new Vector3(-quarterSize, 0f, quarterSize), halfSize);
+        Children[2] = new QTNode(Center + new Vector3(quarterSize, 0f, quarterSize), halfSize);
+        Children[3] = new QTNode(Center + new Vector3(quarterSize, 0f, -quarterSize), halfSize);
     }
 
     /// <summary>
@@ -174,6 +178,7 @@ public class QTNode {
 
         float highest = float.MinValue;
         float lowest = float.MaxValue;
+
         for (int i = 0; i < NumHeightSamples; i++) {
             float height = heightFunc(Center);
             if (height > highest) {

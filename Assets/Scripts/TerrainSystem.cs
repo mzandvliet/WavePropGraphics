@@ -59,6 +59,14 @@ public class TerrainSystem : MonoBehaviour {
             _loadedNodes.Add(new List<QTNode>());
         }
 
+        CreatePooledTiles();
+
+        _activeMeshes = new Dictionary<QTNode, TerrainTile>();
+
+        //DrawTestTerrain();
+    }
+
+    private void CreatePooledTiles() {
         const int numTiles = 360;
         _meshPool = new Stack<TerrainTile>();
         for (int i = 0; i < numTiles; i++) {
@@ -67,10 +75,6 @@ public class TerrainSystem : MonoBehaviour {
             tile.gameObject.SetActive(false);
             _meshPool.Push(tile);
         }
-
-        _activeMeshes = new Dictionary<QTNode, TerrainTile>();
-
-        //DrawTestTerrain();
     }
 
     /*
@@ -156,7 +160,7 @@ public class TerrainSystem : MonoBehaviour {
                 _activeMeshes.Add(node, mesh);
 
                 Vector3 scale = Vector3.one*node.Size;
-                Vector3 position = new Vector3(node.Center.x - node.Size * 0.5f, 0f, node.Center.y - node.Size * 0.5f);
+                Vector3 position = new Vector3(node.Center.x - node.Size * 0.5f, 0f, node.Center.z - node.Size * 0.5f);
 
                 mesh.Transform.position = position;
                 mesh.Transform.localScale = scale;

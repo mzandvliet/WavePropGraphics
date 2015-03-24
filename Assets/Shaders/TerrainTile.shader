@@ -112,7 +112,7 @@
 				o.lightDir = normalize(ObjSpaceLightDir(v.vertex));
 
 				float3 normalColor = tex2Dlod_bilinear(_NormalTex, float4(morphedVertex,0,0)).xyz;
-				o.normal = normalColor;//(normalColor * 2.0) - float3(1,1,1);
+				o.normal = ((normalColor * 2.0) - float3(1,1,1)) * -1;
 
 				TRANSFER_VERTEX_TO_FRAGMENT(o);
 
