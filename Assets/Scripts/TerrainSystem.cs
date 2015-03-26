@@ -63,7 +63,7 @@ public class TerrainSystem : MonoBehaviour {
 
         _activeMeshes = new Dictionary<QTNode, TerrainTile>();
 
-        _heightSampler = new FractalHeightSampler();
+        _heightSampler = new FractalHeightSampler(_heightScale);
 
         //DrawTestTerrain();
     }
@@ -153,7 +153,7 @@ public class TerrainSystem : MonoBehaviour {
 
         for (int i = 0; i < toLoad.Count; i++) {
             var lodNodes = toLoad[i];
-            var lerpRanges = new Vector4(_lodDistances[i] * 1.66f, _lodDistances[i] * 2.0f);
+            var lerpRanges = new Vector4(_lodDistances[i] * 2f, _lodDistances[i] * 3.0f);
 
             for (int j = 0; j < lodNodes.Count; j++) {
                 var node = lodNodes[j];
@@ -168,7 +168,7 @@ public class TerrainSystem : MonoBehaviour {
                 mesh.MeshRenderer.material.SetFloat("_HeightScale", _heightScale);
                 mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
 
-                GenerateTileFractal(heights, normals, numVerts, _heightSampler, position, node.Size.x, _heightScale);
+                GenerateTileFractal(heights, normals, numVerts, _heightSampler, position, node.Size.x);
 
                 var heightmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false);
                 var normalmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false);
@@ -199,7 +199,7 @@ public class TerrainSystem : MonoBehaviour {
 	    return tile;
 	}
 
-    private static void GenerateTileFractal(Color[] heights, Color[] normals, int numVerts, IHeightSampler sampler, Vector3 position, float scale, float heightScale) {
+    private static void GenerateTileFractal(Color[] heights, Color[] normals, int numVerts, IHeightSampler sampler, Vector3 position, float scale) {
         
 
         float stepSize = scale / (numVerts-1);
@@ -217,9 +217,9 @@ public class TerrainSystem : MonoBehaviour {
                 float heightT = sampler.Sample(position.x + x * stepSize, position.z + (z + 1) * stepSize);
 
                 // Todo: the below is in tile-local units, should be world units
-                Vector3 lr = new Vector3(1f / (numVerts-1), (heightR - heightL), 0f).normalized;
-                Vector3 bt = new Vector3(0f, (heightT - heightB), 1f / (numVerts - 1)).normalized;
-                Vector3 normal = Vector3.Cross(lr, bt);
+                Vector3 lr = new Vector3(stepSize * 2f, (heightR - heightL) * sampler.HeightScale, 0f).normalized;
+                Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, stepSize * 2f).normalized;
+                Vector3 normal = Vector3.Cross(lr, bt).normalized;
                 normals[index] = new Color(
                     0.5f + normal.x * 0.5f,
                     0.5f + normal.y * 0.5f,
@@ -238,7 +238,7 @@ public class TerrainSystem : MonoBehaviour {
         var camInfo = CameraInfo.Create(_camera);
 
         if (_heightSampler == null) {
-            _heightSampler = new FractalHeightSampler();
+            _heightSampler = new FractalHeightSampler(_heightScale);
         }
 
         var bMin = new Vector3(-_lodZeroScale*0.5f, 0f, -_lodZeroScale*0.5f);
@@ -293,13 +293,21 @@ public class TerrainSystem : MonoBehaviour {
 }
 
 public interface IHeightSampler {
+    float HeightScale { get; }
     float Sample(float x, float z);
 }
 
 public class FractalHeightSampler : IHeightSampler {
     private RidgeNoise _noise;
+    private float _heightScale;
 
-    public FractalHeightSampler() {
+    public float HeightScale {
+        get { return _heightScale; }
+    }
+
+    public FractalHeightSampler(float heightScale) {
+        _heightScale = heightScale;
+
         _noise = new RidgeNoise(1234);
         _noise.Frequency = 0.001f;
         _noise.Exponent = 0.5f;

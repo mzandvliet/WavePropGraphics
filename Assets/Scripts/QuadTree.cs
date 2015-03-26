@@ -98,7 +98,7 @@ public static class QuadTree {
         float sqrDist = r*r;
         float minDist = 0f;
         for (int i = 0; i < 3; i++) {
-            if (c[i] < bMin[i]) minDist += Square(c[i] - bMax[i]);
+            if (c[i] < bMin[i]) minDist += Square(c[i] - bMin[i]);
             else if (c[i] > bMax[i]) minDist += Square(c[i] - bMax[i]);
         }
         return minDist <= sqrDist;
@@ -195,13 +195,14 @@ public class QTNode {
 
         for (int x = 0; x < samplingResolution; x++) {
             for (int z = 0; z < samplingResolution; z++) {
-                float posX = _position.x + (x / (float) samplingResolution) * Size.x;
-                float posZ = _position.z + (z / (float) samplingResolution) * Size.z;
-                float height = sampler.Sample(posX, posZ) * 512f; // Todo: get height scale from config, obv.
-                
+                float posX = _position.x + (x / (float) (samplingResolution+1)) * Size.x;
+                float posZ = _position.z + (z / (float)(samplingResolution+1)) * Size.z;
+                float height = sampler.Sample(posX, posZ) * sampler.HeightScale;
+
                 if (height > highest) {
                     highest = height;
-                } else if(height < lowest) {
+                }
+                if(height < lowest) {
                     lowest = height;
                 }
             }
