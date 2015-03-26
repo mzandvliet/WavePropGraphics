@@ -52,6 +52,12 @@ public class TerrainSystem : MonoBehaviour {
     private IHeightSampler _heightSampler;
 
     void Awake() {
+        float height = 0.621f;
+        byte lsb = (byte) (Mathf.RoundToInt(height*65535f));
+        byte msb = (byte) (Mathf.RoundToInt(height*65535f) >> 8);
+        float unpackedHeight = (lsb + msb * 256) / 65535.0f;
+        Debug.Log(unpackedHeight);
+
         _lodDistances = QuadTree.GetLodDistances(_numLods, _lodZeroRange);
 
         _loadedNodes = new List<IList<QTNode>>();
@@ -148,12 +154,12 @@ public class TerrainSystem : MonoBehaviour {
 
     private void Load(IList<IList<QTNode>> toLoad) {
         int numVerts = _tileResolution + 1;
-        Color[] heights = new Color[numVerts * numVerts];
+        Color32[] heights = new Color32[numVerts * numVerts];
         Color[] normals = new Color[numVerts * numVerts];
 
         for (int i = 0; i < toLoad.Count; i++) {
             var lodNodes = toLoad[i];
-            var lerpRanges = new Vector4(_lodDistances[i] * 2f, _lodDistances[i] * 3.0f);
+            var lerpRanges = new Vector4(_lodDistances[i] * 2f, _lodDistances[i] * 2.33f);
 
             for (int j = 0; j < lodNodes.Count; j++) {
                 var node = lodNodes[j];
@@ -171,13 +177,18 @@ public class TerrainSystem : MonoBehaviour {
                 GenerateTileFractal(heights, normals, numVerts, _heightSampler, position, node.Size.x);
 
                 var heightmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false);
-                var normalmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false);
+                var normalmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, true);
                 heightmap.wrapMode = TextureWrapMode.Clamp;
                 normalmap.wrapMode = TextureWrapMode.Clamp;
+                heightmap.filterMode = FilterMode.Point;
+                normalmap.filterMode = FilterMode.Bilinear;
+
                 LoadHeightsToTexture(heights, heightmap);
                 LoadHeightsToTexture(normals, normalmap);
                 mesh.MeshRenderer.material.SetTexture("_HeightTex", heightmap);
                 mesh.MeshRenderer.material.SetTexture("_NormalTex", normalmap);
+
+                mesh.Mesh.bounds = new Bounds(Vector3.zero, node.Size);
 
                 mesh.gameObject.name = "Terrain_LOD_" + i;
                 mesh.gameObject.SetActive(true);
@@ -199,9 +210,7 @@ public class TerrainSystem : MonoBehaviour {
 	    return tile;
 	}
 
-    private static void GenerateTileFractal(Color[] heights, Color[] normals, int numVerts, IHeightSampler sampler, Vector3 position, float scale) {
-        
-
+    private static void GenerateTileFractal(Color32[] heights, Color[] normals, int numVerts, IHeightSampler sampler, Vector3 position, float scale) {
         float stepSize = scale / (numVerts-1);
 
         for (int x = 0; x < numVerts; x++) {
@@ -209,16 +218,21 @@ public class TerrainSystem : MonoBehaviour {
                 int index = x + z*numVerts;
 
                 float height = sampler.Sample(position.x + x * stepSize, position.z + z * stepSize);
-                heights[index] = new Color(height, height, height, height);
+                //output[iX, iY] = (input[i++] + input[i++] * 256f) / 65535f;
+                heights[index] = new Color32(
+                    (byte)(Mathf.RoundToInt(height * 65535f)),
+                    (byte)(Mathf.RoundToInt(height * 65535f) >> 8),
+                    0,
+                    0
+                    );
 
                 float heightL = sampler.Sample(position.x + (x - 1) * stepSize, position.z + z * stepSize);
                 float heightR = sampler.Sample(position.x + (x + 1) * stepSize, position.z + z * stepSize);
                 float heightB = sampler.Sample(position.x + x * stepSize, position.z + (z - 1) * stepSize);
                 float heightT = sampler.Sample(position.x + x * stepSize, position.z + (z + 1) * stepSize);
 
-                // Todo: the below is in tile-local units, should be world units
-                Vector3 lr = new Vector3(stepSize * 2f, (heightR - heightL) * sampler.HeightScale, 0f).normalized;
-                Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, stepSize * 2f).normalized;
+                Vector3 lr = new Vector3(stepSize * 2f, (heightR - heightL) * sampler.HeightScale, 0f);
+                Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, stepSize * 2f);
                 Vector3 normal = Vector3.Cross(lr, bt).normalized;
                 normals[index] = new Color(
                     0.5f + normal.x * 0.5f,
@@ -232,6 +246,11 @@ public class TerrainSystem : MonoBehaviour {
     private static void LoadHeightsToTexture(Color[] heights, Texture2D texture) {
         texture.SetPixels(heights);
         texture.Apply(true);
+    }
+
+    private static void LoadHeightsToTexture(Color32[] heights, Texture2D texture) {
+        texture.SetPixels32(heights);
+        texture.Apply(false);
     }
 
     private void OnDrawGizmos() {

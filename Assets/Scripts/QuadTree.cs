@@ -129,7 +129,7 @@ public static class QuadTree {
 
     public static void DrawNodeRecursively(QTNode node, int currentLod, int maxLod) {
         Gizmos.color = Color.Lerp(Color.red, Color.green, currentLod / (float)maxLod);
-        DrawQuad(node.Center, node.Size);
+        Gizmos.DrawWireCube(node.Center, node.Size);
         if (node.Children != null) {
             for (int i = 0; i < node.Children.Length; i++) {
                 DrawNodeRecursively(node.Children[i], currentLod + 1, maxLod);
@@ -142,40 +142,35 @@ public static class QuadTree {
             Gizmos.color = Color.Lerp(Color.red, Color.green, i / (float)nodes.Count);
             for (int j = 0; j < nodes[i].Count; j++) {
                 var node = nodes[i][j];
-                DrawQuad(node.Center, node.Size);
+                Gizmos.DrawWireCube(node.Center, node.Size);
             }
         }
-    }
-
-    private static void DrawQuad(Vector3 center, Vector3 size) {
-        Gizmos.DrawWireCube(center, size);
     }
 }
 
 public class QTNode {
     private Vector3 _position;
     private Vector3 _size;
-
-    public Vector3 Position { get { return _position; } set { _position = value; } }
-    public Vector3 Size { get { return _size; } set { _size = value; } }
-
-    public Vector3 Center { get { return Position + Size * 0.5f; } }
-    
     public QTNode[] Children { get; private set; }
 
+
+    public Vector3 Position { get { return _position; } }
+    public Vector3 Size { get { return _size; } }
+    public Vector3 Center { get { return Position + Size * 0.5f; } }
+
     public QTNode(Vector3 position, Vector3 size) {
-        Position = position;
-        Size = size;
+        _position = position;
+        _size = size;
     }
 
     public void CreateChildren(IHeightSampler sampler) {
         Children = new QTNode[4];
         float halfSize = Size.x*0.5f;
 
-        Children[0] = new QTNode(Position + new Vector3(0f, 0f, 0f), new Vector3(halfSize, 0f, halfSize));
-        Children[1] = new QTNode(Position + new Vector3(0f, 0f, halfSize), new Vector3(halfSize, 0f, halfSize));
-        Children[2] = new QTNode(Position + new Vector3(halfSize, 0f, halfSize), new Vector3(halfSize, 0f, halfSize));
-        Children[3] = new QTNode(Position + new Vector3(halfSize, 0f, 0f), new Vector3(halfSize, 0f, halfSize));
+        Children[0] = new QTNode(_position + new Vector3(0f, 0f, 0f), new Vector3(halfSize, 0f, halfSize));
+        Children[1] = new QTNode(_position + new Vector3(0f, 0f, halfSize), new Vector3(halfSize, 0f, halfSize));
+        Children[2] = new QTNode(_position + new Vector3(halfSize, 0f, halfSize), new Vector3(halfSize, 0f, halfSize));
+        Children[3] = new QTNode(_position + new Vector3(halfSize, 0f, 0f), new Vector3(halfSize, 0f, halfSize));
 
         for (int i = 0; i < Children.Length; i++) {
             Children[i].FitHeightSamples(sampler);

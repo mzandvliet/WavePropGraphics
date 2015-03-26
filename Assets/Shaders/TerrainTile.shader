@@ -70,6 +70,10 @@
 				return lerp(tA, tB, pixelFrac.y);
 			}
 
+			float UnpackHeight(float4 c) {
+				return (c.r + c.g * 256.0) / 256.0;
+			}
+
 			// Todo: right now this is in unit quad space, so gridpos == vertex. Simplify.
 			float2 morphVertex(float2 gridPos, float2 vertex, float lerp) {
 				const float g_resolution = 16.0; // Todo: supply from script
@@ -83,7 +87,10 @@
 
 				/* shift odd-numbered vertices to even numbered vertices based on distance to camera */
 
+				float height = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(v.vertex.x, v.vertex.z, 0, 0)));
+
 				float4 wsVertex = mul(_Object2World, v.vertex); // world space vert for distance
+				wsVertex.y = height * _HeightScale;
 
 				// Construct morph parameter based on distance to camera
 				float distance = length(wsVertex.xyz - _WorldSpaceCameraPos);
@@ -101,8 +108,8 @@
 				wsVertex = mul(_Object2World, wsVertex); // Morphed vertex to world space
 
 				// Sample height using morphed local unit space
-				float4 height = tex2Dlod_bilinear(_HeightTex, float4(morphedVertex.x, morphedVertex.y, 0, 0));
-				wsVertex.y = height.r * _HeightScale;
+				height = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(morphedVertex.x, morphedVertex.y, 0, 0)));
+				wsVertex.y = height * _HeightScale;
 
 				// To clip space
 				o.pos = mul(UNITY_MATRIX_VP, wsVertex);
@@ -118,8 +125,6 @@
 
 				return o;
 			}
-
-
 
 			half4 frag(v2f i) : COLOR { //out float depth:DEPTH
 				// Transform logarithmically
@@ -137,6 +142,7 @@
 				float4 diffuse = tex2D(_MainTex, i.uv);
 				float4 finalColor = (ambient + diffuseTerm) * diffuse;
 
+				//return tex2D(_HeightTex, i.uv);
 				//return half4(N, 1.0);
 				return finalColor;
 			}
