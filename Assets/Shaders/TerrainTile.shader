@@ -71,7 +71,7 @@
 			}
 
 			float UnpackHeight(float4 c) {
-				return (c.r + c.g * 256.0) / 256.0;
+				return (c.r * 256 + c.g) / 257.0;
 			}
 
 			// Todo: right now this is in unit quad space, so gridpos == vertex. Simplify.
@@ -119,7 +119,7 @@
 				o.lightDir = normalize(ObjSpaceLightDir(v.vertex));
 
 				float3 normalColor = tex2Dlod_bilinear(_NormalTex, float4(morphedVertex,0,0)).xyz;
-				o.normal = ((normalColor * 2.0) - float3(1,1,1)) * -1;
+				o.normal = ((normalColor * 2.0) - float3(1,1,1));
 
 				TRANSFER_VERTEX_TO_FRAGMENT(o);
 
@@ -142,7 +142,7 @@
 				float4 diffuse = tex2D(_MainTex, i.uv);
 				float4 finalColor = (ambient + diffuseTerm) * diffuse;
 
-				//return tex2D(_HeightTex, i.uv);
+				return tex2D(_HeightTex, i.uv);
 				//return half4(N, 1.0);
 				return finalColor;
 			}

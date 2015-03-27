@@ -1,26 +1,18 @@
-﻿using System;
-using UnityEngine;
+﻿using UnityEngine;
 using System.Collections.Generic;
 
 /*
- * Just occurred to me: for quadtree traversal and culling the nodes need height information.
- * Else, if you're at a mountaintop at 4km, you'll still be 4km from the node, and thus at low lod.
- * Thus, nodes need some min/max information (bounding box)
- *
  * Should we handle streaming and culling separately? If we temporarilly look up at the sky (no terrain drawn)
  * we don't want to *render* terrain, but we probably do want to have it *loaded* and ready to go. Stream based
  * on where we *are*, not so much based on what we're *looking at*. Only exception is zooming through a scope, really.
  *
- * Performance/Scaling thought: if procedural source is used, resolution is arbitrary. Let players set range and resolution to arbitrary levels.
+ * Performance/Scaling thought: if a (purely functional) procedural source is used, resolution is arbitrary. Let players set range and resolution to arbitrary levels.
  * 
  * Todo:
- * - Produce a list of all required tiles, their positions and lod levels that should be rendered
  * - Implement partial child expansion
  * - Implement frustum culling
  *      - Render camera
  *      - Light sources
- *
- * Could use Bounds and GeometryUtility from UnityEngine
  */
 
 public static class QuadTree {
@@ -36,9 +28,6 @@ public static class QuadTree {
         return distances;
     }
 
-    /* This does two things: expand the quadtree based on distance rule and culling, and parses the results
-     * to a handy to use list for streaming. Could be two separate functions, but that would be less speedy
-     */
     public static IList<IList<QTNode>> ExpandNodesToList(
         Vector3 rootPosition,
         Vector3 lodZeroSize,
@@ -66,6 +55,7 @@ public static class QuadTree {
         float[] lodDistances,
         IList<IList<QTNode>> selectedNodes,
         IHeightSampler sampler) {
+
         // If we're at the deepest lod level, no need to expand further
         if (currentLod == lodDistances.Length-1) {
             selectedNodes[currentLod].Add(node);
@@ -75,7 +65,7 @@ public static class QuadTree {
         // If not, we should create children if we're in LOD range
         if (Intersect(node, cam, lodDistances[currentLod])) {
             if (node.Children == null) {
-                node.CreateChildren(sampler);
+                node.Expand(sampler);
             }
 
             for (int i = 0; i < node.Children.Length; i++) {
@@ -88,23 +78,21 @@ public static class QuadTree {
         selectedNodes[currentLod].Add(node);
     }
 
-    // Todo: this check should be 3D, using QTNode min/max height, but is only on the horizontal plane right now
-    // Todo: optimize
     private static bool Intersect(QTNode node, CameraInfo camInfo, float range) {
         return Intersect(node.Position, node.Position + node.Size, camInfo.Position, range);
     }
 
-    private static bool Intersect(Vector3 bMin, Vector3 bMax, Vector3 c, float r) {
-        float sqrDist = r*r;
+    private static bool Intersect(Vector3 bMin, Vector3 bMax, Vector3 sPos, float sRadius) {
+        float sqrRadius = Sqr(sRadius);
         float minDist = 0f;
         for (int i = 0; i < 3; i++) {
-            if (c[i] < bMin[i]) minDist += Square(c[i] - bMin[i]);
-            else if (c[i] > bMax[i]) minDist += Square(c[i] - bMax[i]);
+            if      (sPos[i] < bMin[i]) minDist += Sqr(sPos[i] - bMin[i]);
+            else if (sPos[i] > bMax[i]) minDist += Sqr(sPos[i] - bMax[i]);
         }
-        return minDist <= sqrDist;
+        return minDist <= sqrRadius;
     }
 
-    private static float Square(float val) {
+    private static float Sqr(float val) {
         return val*val;
     }
 
@@ -151,29 +139,29 @@ public static class QuadTree {
 public class QTNode {
     private Vector3 _position;
     private Vector3 _size;
-    public QTNode[] Children { get; private set; }
-
+    private QTNode[] _children;
 
     public Vector3 Position { get { return _position; } }
     public Vector3 Size { get { return _size; } }
-    public Vector3 Center { get { return Position + Size * 0.5f; } }
+    public QTNode[] Children { get { return _children; } }
+    public Vector3 Center { get { return _position + _size * 0.5f; } }
 
     public QTNode(Vector3 position, Vector3 size) {
         _position = position;
         _size = size;
     }
 
-    public void CreateChildren(IHeightSampler sampler) {
-        Children = new QTNode[4];
-        float halfSize = Size.x*0.5f;
+    public void Expand(IHeightSampler sampler) {
+        _children = new QTNode[4];
+        Vector3 halfSize = Size * 0.5f;
 
-        Children[0] = new QTNode(_position + new Vector3(0f, 0f, 0f), new Vector3(halfSize, 0f, halfSize));
-        Children[1] = new QTNode(_position + new Vector3(0f, 0f, halfSize), new Vector3(halfSize, 0f, halfSize));
-        Children[2] = new QTNode(_position + new Vector3(halfSize, 0f, halfSize), new Vector3(halfSize, 0f, halfSize));
-        Children[3] = new QTNode(_position + new Vector3(halfSize, 0f, 0f), new Vector3(halfSize, 0f, halfSize));
+        _children[0] = new QTNode(_position + new Vector3(0f, 0f, 0f), halfSize);
+        _children[1] = new QTNode(_position + new Vector3(0f, 0f, halfSize.z), halfSize);
+        _children[2] = new QTNode(_position + new Vector3(halfSize.x, 0f, halfSize.z), halfSize);
+        _children[3] = new QTNode(_position + new Vector3(halfSize.x, 0f, 0f), halfSize);
 
-        for (int i = 0; i < Children.Length; i++) {
-            Children[i].FitHeightSamples(sampler);
+        for (int i = 0; i < _children.Length; i++) {
+            _children[i].FitHeightSamples(sampler);
         }
     }
 
@@ -188,12 +176,14 @@ public class QTNode {
         float highest = float.MinValue;
         float lowest = float.MaxValue;
 
+        float stepSize = Size.x/(samplingResolution-1);
+
         for (int x = 0; x < samplingResolution; x++) {
             for (int z = 0; z < samplingResolution; z++) {
-                float posX = _position.x + (x / (float) (samplingResolution+1)) * Size.x;
-                float posZ = _position.z + (z / (float)(samplingResolution+1)) * Size.z;
+                float posX = _position.x + x * stepSize;
+                float posZ = _position.z + z * stepSize;
                 float height = sampler.Sample(posX, posZ) * sampler.HeightScale;
-
+                
                 if (height > highest) {
                     highest = height;
                 }

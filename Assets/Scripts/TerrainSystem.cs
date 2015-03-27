@@ -52,11 +52,23 @@ public class TerrainSystem : MonoBehaviour {
     private IHeightSampler _heightSampler;
 
     void Awake() {
+//        float height = 0.621f;
+//        byte msb = (byte)(Mathf.RoundToInt(height * 65535f) >> 8);
+//        byte lsb = (byte) (Mathf.RoundToInt(height*65535f));
+//        float unpackedHeight = (lsb + msb * 256) / 65535.0f;
+//        Debug.Log(unpackedHeight);
+
         float height = 0.621f;
-        byte lsb = (byte) (Mathf.RoundToInt(height*65535f));
-        byte msb = (byte) (Mathf.RoundToInt(height*65535f) >> 8);
-        float unpackedHeight = (lsb + msb * 256) / 65535.0f;
-        Debug.Log(unpackedHeight);
+        byte msb = (byte)(Mathf.RoundToInt(height * 65535f) >> 8);
+        byte lsb = (byte)(Mathf.RoundToInt(height * 65535f));
+        Texture2D tex = new Texture2D(8,8, TextureFormat.ARGB32, false, true);
+        tex.SetPixels32(0,0, 1, 1, new [] { new Color32(msb, lsb, 0, 0) }); 
+        tex.Apply(false);
+        Color color = tex.GetPixel(0, 0);
+        float msbFloat = color.r;
+        float lsbFloat = color.g;
+        float unpackedHeight = (lsbFloat + msbFloat * 256f) / 257f;
+        Debug.Log(unpackedHeight + ": " + msbFloat + ", " + lsbFloat);
 
         _lodDistances = QuadTree.GetLodDistances(_numLods, _lodZeroRange);
 
@@ -159,7 +171,7 @@ public class TerrainSystem : MonoBehaviour {
 
         for (int i = 0; i < toLoad.Count; i++) {
             var lodNodes = toLoad[i];
-            var lerpRanges = new Vector4(_lodDistances[i] * 2f, _lodDistances[i] * 2.33f);
+            var lerpRanges = new Vector4(_lodDistances[i] * 1.66f, _lodDistances[i] * 2f);
 
             for (int j = 0; j < lodNodes.Count; j++) {
                 var node = lodNodes[j];
@@ -176,8 +188,8 @@ public class TerrainSystem : MonoBehaviour {
 
                 GenerateTileFractal(heights, normals, numVerts, _heightSampler, position, node.Size.x);
 
-                var heightmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false);
-                var normalmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, true);
+                var heightmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false, true);
+                var normalmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, true, true);
                 heightmap.wrapMode = TextureWrapMode.Clamp;
                 normalmap.wrapMode = TextureWrapMode.Clamp;
                 heightmap.filterMode = FilterMode.Point;
@@ -211,17 +223,20 @@ public class TerrainSystem : MonoBehaviour {
 	}
 
     private static void GenerateTileFractal(Color32[] heights, Color[] normals, int numVerts, IHeightSampler sampler, Vector3 position, float scale) {
-        float stepSize = scale / (numVerts-1);
+        float stepSize = scale / (numVerts-1); 
+
+        /* Todo: can optimize normal generation by first sampling all heights, then using those to generate normals.
+         * Only need procedural samples at edges. */
 
         for (int x = 0; x < numVerts; x++) {
             for (int z = 0; z < numVerts; z++) {
                 int index = x + z*numVerts;
 
                 float height = sampler.Sample(position.x + x * stepSize, position.z + z * stepSize);
-                //output[iX, iY] = (input[i++] + input[i++] * 256f) / 65535f;
+                
                 heights[index] = new Color32(
-                    (byte)(Mathf.RoundToInt(height * 65535f)),
                     (byte)(Mathf.RoundToInt(height * 65535f) >> 8),
+                    (byte)(Mathf.RoundToInt(height * 65535f)),
                     0,
                     0
                     );
@@ -233,7 +248,8 @@ public class TerrainSystem : MonoBehaviour {
 
                 Vector3 lr = new Vector3(stepSize * 2f, (heightR - heightL) * sampler.HeightScale, 0f);
                 Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, stepSize * 2f);
-                Vector3 normal = Vector3.Cross(lr, bt).normalized;
+                Vector3 normal = Vector3.Cross(bt, lr).normalized;
+                
                 normals[index] = new Color(
                     0.5f + normal.x * 0.5f,
                     0.5f + normal.y * 0.5f,
@@ -317,6 +333,8 @@ public interface IHeightSampler {
 }
 
 public class FractalHeightSampler : IHeightSampler {
+    /* Todo: this ridgenoise behaves weirdly. Output range seems unreliable. */
+
     private RidgeNoise _noise;
     private float _heightScale;
 
@@ -334,6 +352,9 @@ public class FractalHeightSampler : IHeightSampler {
     }
 
     public float Sample(float x, float z) {
-        return _noise.GetValue(x, z, 0f) * 0.5f;
+//        return 
+//            (0.5f + Mathf.Sin((x*Mathf.PI)*0.001f) * 0.5f) *
+//            (0.5f + Mathf.Sin((z * Mathf.PI) * 0.001f) * 0.5f);
+        return Mathf.Clamp01(_noise.GetValue(x, z, 0f) * 0.5f);
     }
 }
