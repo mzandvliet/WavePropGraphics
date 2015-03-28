@@ -28,24 +28,6 @@ public static class QuadTree {
         return distances;
     }
 
-    public static IList<IList<QTNode>> ExpandNodesToList(
-        Vector3 rootPosition,
-        Vector3 lodZeroSize,
-        float[] lodDistances,
-        CameraInfo cam,
-        IHeightSampler sampler) {
-        var root = new QTNode(rootPosition, lodZeroSize);
-
-        IList<IList<QTNode>> selectedNodes = new List<IList<QTNode>>(lodDistances.Length);
-        for (int i = 0; i < lodDistances.Length; i++) {
-            selectedNodes.Add(new List<QTNode>());
-        }
-
-        ExpandNodeRecursively(0, root, cam, lodDistances, selectedNodes, sampler);
-
-        return selectedNodes;
-    }
-
     // Todo: partial child expansion (needs parent mesh partial vertex enable/disable)
     // Todo: optimize
     public static void ExpandNodeRecursively(
@@ -100,19 +82,14 @@ public static class QuadTree {
         return true;
     }
 
-    public static IList<IList<QTNode>> Diff(IList<IList<QTNode>> a, IList<IList<QTNode>> b) {
-        IList<IList<QTNode>> result = new List<IList<QTNode>>();
-
+    public static void Diff(IList<IList<QTNode>> a, IList<IList<QTNode>> b, IList<IList<QTNode>> result) {
         for (int i = 0; i < b.Count; i++) {
-            result.Add(new List<QTNode>());
             for (int j = 0; j < b[i].Count; j++) {
                 if (!a[i].Contains(b[i][j])) {
                     result[i].Add(b[i][j]);
                 }
             }
         }
-
-        return result;
     } 
 
     public static void DrawNodeRecursively(QTNode node, int currentLod, int maxLod) {
@@ -194,7 +171,7 @@ public class QTNode {
         }
 
         _position.y = lowest;
-        _size.y = highest - lowest;
+        _size.y = (highest - lowest) * 1.05f; // Add in a tiny margin for error caused by subsampling
     }
 
     /*

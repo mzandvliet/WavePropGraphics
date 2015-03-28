@@ -45,45 +45,43 @@ public class TerrainSystem : MonoBehaviour {
     private float[] _lodDistances;
 
     private Stack<TerrainTile> _meshPool;
-    private IDictionary<QTNode, TerrainTile> _activeMeshes;  
-    private IList<IList<QTNode>> _loadedNodes;
+    private IDictionary<QTNode, TerrainTile> _activeMeshes;
 
+    private IList<IList<QTNode>> _visibleNodes;
+    private IList<IList<QTNode>> _toLoad;
+    private IList<IList<QTNode>> _toUnload;
+    private IList<IList<QTNode>> _loadedNodes;
 
     private IHeightSampler _heightSampler;
 
     void Awake() {
-//        float height = 0.621f;
-//        byte msb = (byte)(Mathf.RoundToInt(height * 65535f) >> 8);
-//        byte lsb = (byte) (Mathf.RoundToInt(height*65535f));
-//        float unpackedHeight = (lsb + msb * 256) / 65535.0f;
-//        Debug.Log(unpackedHeight);
-
-        float height = 0.621f;
-        byte msb = (byte)(Mathf.RoundToInt(height * 65535f) >> 8);
-        byte lsb = (byte)(Mathf.RoundToInt(height * 65535f));
-        Texture2D tex = new Texture2D(8,8, TextureFormat.ARGB32, false, true);
-        tex.SetPixels32(0,0, 1, 1, new [] { new Color32(msb, lsb, 0, 0) }); 
-        tex.Apply(false);
-        Color color = tex.GetPixel(0, 0);
-        float msbFloat = color.r;
-        float lsbFloat = color.g;
-        float unpackedHeight = (lsbFloat + msbFloat * 256f) / 257f;
-        Debug.Log(unpackedHeight + ": " + msbFloat + ", " + lsbFloat);
-
         _lodDistances = QuadTree.GetLodDistances(_numLods, _lodZeroRange);
 
-        _loadedNodes = new List<IList<QTNode>>();
-        for (int i = 0; i < _numLods; i++) {
-            _loadedNodes.Add(new List<QTNode>());
-        }
-
-        CreatePooledTiles();
-
-        _activeMeshes = new Dictionary<QTNode, TerrainTile>();
+        _visibleNodes = CreateList(_numLods);
+        _loadedNodes = CreateList(_numLods);
+        _toLoad = CreateList(_numLods);
+        _toUnload = CreateList(_numLods);
 
         _heightSampler = new FractalHeightSampler(_heightScale);
 
+        CreatePooledTiles();
+        _activeMeshes = new Dictionary<QTNode, TerrainTile>();
+
         //DrawTestTerrain();
+    }
+
+    private static IList<IList<QTNode>> CreateList(int length) {
+        var list = new List<IList<QTNode>>(length);
+        for (int i = 0; i < length; i++) {
+            list.Add(new List<QTNode>());
+        }
+        return list;
+    }
+
+    private static void ClearList(IList<IList<QTNode>> list) {
+        for (int i = 0; i < list.Count; i++) {
+            list[i].Clear();
+        }
     }
 
     private void CreatePooledTiles() {
@@ -142,13 +140,29 @@ public class TerrainSystem : MonoBehaviour {
 
         var bMin = new Vector3(-_lodZeroScale * 0.5f, 0f, -_lodZeroScale * 0.5f);
         var lodZeroScale = new Vector3(_lodZeroScale, _heightScale, _lodZeroScale);
-        var requiredNodes = QuadTree.ExpandNodesToList(bMin, lodZeroScale, _lodDistances, camInfo, _heightSampler);
 
-        var toUnload = QuadTree.Diff(requiredNodes, _loadedNodes);
-        var toLoad = QuadTree.Diff(_loadedNodes, requiredNodes);
+        Profiler.BeginSample("Clear");
+        ClearList(_visibleNodes);
+        ClearList(_toLoad);
+        ClearList(_toUnload);
+        Profiler.EndSample();
 
-        Unload(toUnload);
-        Load(toLoad);
+        Profiler.BeginSample("ExpandNodesToList");
+        QTNode root = new QTNode(bMin, lodZeroScale);
+        QuadTree.ExpandNodeRecursively(0, root, camInfo, _lodDistances, _visibleNodes, _heightSampler);
+        Profiler.EndSample();
+
+        Profiler.BeginSample("Diffs");
+        QuadTree.Diff(_visibleNodes, _loadedNodes, _toUnload);
+        QuadTree.Diff(_loadedNodes, _visibleNodes, _toLoad);
+        Profiler.EndSample();
+
+        Profiler.BeginSample("Unload");
+        Unload(_toUnload);
+        Profiler.EndSample();
+        Profiler.BeginSample("Load");
+        Load(_toLoad);
+        Profiler.EndSample();
     }
 
     private void Unload(IList<IList<QTNode>> toUnload) {
@@ -164,6 +178,10 @@ public class TerrainSystem : MonoBehaviour {
         }
     }
 
+    /* Todo: Optimize
+     * - Store textures with their tiles, allocate at startup
+     * - Allocate height and color arrays at startup too?
+     */
     private void Load(IList<IList<QTNode>> toLoad) {
         int numVerts = _tileResolution + 1;
         Color32[] heights = new Color32[numVerts * numVerts];
@@ -171,7 +189,7 @@ public class TerrainSystem : MonoBehaviour {
 
         for (int i = 0; i < toLoad.Count; i++) {
             var lodNodes = toLoad[i];
-            var lerpRanges = new Vector4(_lodDistances[i] * 1.66f, _lodDistances[i] * 2f);
+            var lerpRanges = new Vector4(_lodDistances[i] * 2f, _lodDistances[i] * 2.33f);
 
             for (int j = 0; j < lodNodes.Count; j++) {
                 var node = lodNodes[j];
@@ -237,17 +255,15 @@ public class TerrainSystem : MonoBehaviour {
                 heights[index] = new Color32(
                     (byte)(Mathf.RoundToInt(height * 65535f) >> 8),
                     (byte)(Mathf.RoundToInt(height * 65535f)),
-                    0,
-                    0
-                    );
+                    0,0);
 
                 float heightL = sampler.Sample(position.x + (x - 1) * stepSize, position.z + z * stepSize);
                 float heightR = sampler.Sample(position.x + (x + 1) * stepSize, position.z + z * stepSize);
                 float heightB = sampler.Sample(position.x + x * stepSize, position.z + (z - 1) * stepSize);
                 float heightT = sampler.Sample(position.x + x * stepSize, position.z + (z + 1) * stepSize);
 
-                Vector3 lr = new Vector3(stepSize * 2f, (heightR - heightL) * sampler.HeightScale, 0f);
-                Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, stepSize * 2f);
+                Vector3 lr = new Vector3(2f * stepSize, (heightR - heightL) * sampler.HeightScale, 0f);
+                Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, 2f * stepSize);
                 Vector3 normal = Vector3.Cross(bt, lr).normalized;
                 
                 normals[index] = new Color(
@@ -273,13 +289,16 @@ public class TerrainSystem : MonoBehaviour {
         var camInfo = CameraInfo.Create(_camera);
 
         if (_heightSampler == null) {
+            _lodDistances = QuadTree.GetLodDistances(_numLods, _lodZeroRange);
             _heightSampler = new FractalHeightSampler(_heightScale);
+            _visibleNodes = CreateList(_numLods);
         }
 
         var bMin = new Vector3(-_lodZeroScale*0.5f, 0f, -_lodZeroScale*0.5f);
         var lodZeroScale = new Vector3(_lodZeroScale, _heightScale, _lodZeroScale);
-        var nodes = QuadTree.ExpandNodesToList(bMin, lodZeroScale, QuadTree.GetLodDistances(_numLods, _lodZeroRange), camInfo, _heightSampler);
-        QuadTree.DrawSelectedNodes(nodes);
+        QTNode root = new QTNode(bMin, lodZeroScale);
+        QuadTree.ExpandNodeRecursively(0, root, camInfo, _lodDistances, _visibleNodes, _heightSampler);
+        QuadTree.DrawSelectedNodes(_visibleNodes);
 
         Gizmos.color = Color.magenta;
         Gizmos.DrawRay(camInfo.Position, Vector3.up * 1000f);

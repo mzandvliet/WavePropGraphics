@@ -74,6 +74,10 @@
 				return (c.r * 256 + c.g) / 257.0;
 			}
 
+			float3 UnpackHeightNormal(float4 c) {
+				return (c.xyz * 2.0) - float3(1,1,1);
+			}
+
 			// Todo: right now this is in unit quad space, so gridpos == vertex. Simplify.
 			float2 morphVertex(float2 gridPos, float2 vertex, float lerp) {
 				const float g_resolution = 16.0; // Todo: supply from script
@@ -118,8 +122,8 @@
 
 				o.lightDir = normalize(ObjSpaceLightDir(v.vertex));
 
-				float3 normalColor = tex2Dlod_bilinear(_NormalTex, float4(morphedVertex,0,0)).xyz;
-				o.normal = ((normalColor * 2.0) - float3(1,1,1));
+				float4 normal = tex2Dlod_bilinear(_NormalTex, float4(morphedVertex,0,0));
+				o.normal = UnpackHeightNormal(normal);
 
 				TRANSFER_VERTEX_TO_FRAGMENT(o);
 
@@ -142,7 +146,7 @@
 				float4 diffuse = tex2D(_MainTex, i.uv);
 				float4 finalColor = (ambient + diffuseTerm) * diffuse;
 
-				return tex2D(_HeightTex, i.uv);
+			//	return tex2D(_HeightTex, i.uv);
 				//return half4(N, 1.0);
 				return finalColor;
 			}
