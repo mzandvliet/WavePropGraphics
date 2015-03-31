@@ -46,9 +46,7 @@ public static class QuadTree {
 
         // If not, we should create children if we're in LOD range
         if (Intersect(node, cam, lodDistances[currentLod])) {
-            if (node.Children == null) {
-                node.Expand(sampler);
-            }
+            node.Expand(sampler);
 
             for (int i = 0; i < node.Children.Length; i++) {
                 ExpandNodeRecursively(currentLod + 1, node.Children[i], cam, lodDistances, selectedNodes, sampler);
@@ -56,7 +54,7 @@ public static class QuadTree {
             return;
         }
 
-        // If we don't need to expand, just add to the list (todo: can roll into top if statement)
+        // If we don't need to expand, just add to the list (todo: can roll this into top if statement)
         selectedNodes[currentLod].Add(node);
     }
 
@@ -78,6 +76,7 @@ public static class QuadTree {
         return val*val;
     }
 
+    /* Todo: use this to cull tiles during tree expansion */
     private static bool IntersectFrustum(CameraInfo info, QTNode node) {
         return true;
     }
@@ -85,12 +84,22 @@ public static class QuadTree {
     public static void Diff(IList<IList<QTNode>> a, IList<IList<QTNode>> b, IList<IList<QTNode>> result) {
         for (int i = 0; i < b.Count; i++) {
             for (int j = 0; j < b[i].Count; j++) {
-                if (!a[i].Contains(b[i][j])) {
+                if (!FastContains(a[i], b[i][j])) {
                     result[i].Add(b[i][j]);
                 }
             }
         }
-    } 
+    }
+
+    /* Fast Contains function that avoids boxing in QTNode type */
+    private static bool FastContains(IList<QTNode> list, QTNode node) {
+        for (int i = 0; i < list.Count; i++) {
+            if (list[i].FastEquals(node)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     public static void DrawNodeRecursively(QTNode node, int currentLod, int maxLod) {
         Gizmos.color = Color.Lerp(Color.red, Color.green, currentLod / (float)maxLod);
@@ -181,8 +190,12 @@ public class QTNode {
      * minimize garbage.
      */
 
+    public bool FastEquals(QTNode other) {
+        return Position == other.Position && Size == other.Size;
+    }
+
     protected bool Equals(QTNode other) {
-        return _position.Equals(other._position) && _size.Equals(other._size);
+        return Position == other.Position && Size == other.Size;
     }
 
     public override bool Equals(object obj) {
