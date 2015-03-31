@@ -10,8 +10,8 @@ struct Input
 	float2 tc_Control : TEXCOORD4;	// Not prefixing '_Contorl' with 'uv' allows a tighter packing of interpolators, which is necessary to support directional lightmap.
 	float fresnel;
 	float camDist;
-	float3 worldPos;
-	float3 worldNormal;
+	float3 myWorldPos;
+	float3 myWorldNormal;
 	INTERNAL_DATA
 	UNITY_FOG_COORDS(5)
 };
@@ -38,12 +38,12 @@ void SplatmapVert(inout appdata_full v, out Input data)
 	float4 pos = mul (UNITY_MATRIX_MVP, v.vertex);
 	UNITY_TRANSFER_FOG(data, pos);
 
-	float3 worldPos = mul(_Object2World, v.vertex).xyz;
-	float3 worldNormal = normalize(mul((float3x3)_Object2World, v.normal));
-	float3 camDelta = worldPos - _WorldSpaceCameraPos.xyz;
+	data.myWorldPos = mul(_Object2World, v.vertex).xyz;
+	data.myWorldNormal = normalize(mul((float3x3)_Object2World, v.normal));
+	float3 camDelta = data.myWorldPos - _WorldSpaceCameraPos.xyz;
 	float3 i = normalize(camDelta);
 	data.camDist = length(camDelta);
- 	data.fresnel = _FresnelBias + _FresnelScale * pow(1.0 + dot(i, worldNormal), _FresnelPower);
+ 	data.fresnel = _FresnelBias + _FresnelScale * pow(1.0 + dot(i, data.myWorldNormal), _FresnelPower);
 
 #ifdef _TERRAIN_NORMAL_MAP
 	v.tangent.xyz = cross(v.normal, float3(0,0,1));
@@ -60,7 +60,7 @@ fixed4 Tex2DTriplanar(sampler2D tex, float3 pos, float3 blend) {
 
 float4 HeightBlend(float4 c1, float h1, float a1, float4 c2, float h2, float a2) {
 	float depth = 0.2;
-	float ma = max(h1 + a1, h2 + a2) - depth;
+	float ma = max(h1+a1, h2+a2) - depth;
 	float b1 = max(h1+a1 - ma, 0);
 	float b2 = max(h2+a2 - ma, 0);
 	return (c1 * b1 + c2 * b2) / (b1+b2);
@@ -83,18 +83,19 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 		clip(weight - 0.0039 /*1/255*/);
 	#endif
 
-	float distLerp = min(1, max(0, (IN.camDist - 50.0) / 100.0));
+	float distLerp = min(1, max(0, (IN.camDist - 25.0) / 50.0));
 
 	// The below loses the y component, making this effectively duoplanar mapping.
 	// Very useful for cliff textures with clear horizontal lines, where the y component would look awful.
 	//float3 worldNormal = normalize(float3(IN.worldNormal.x, 0, IN.worldNormal.z));
-	float3 worldNormal = IN.worldNormal;
+	float3 worldNormal = IN.myWorldNormal;
+	//float3 worldNormal = WorldNormalVector(IN, float3(0,0,1));
 	float3 tpBlend = abs(worldNormal);
 
 	const float _UVScale = 0.125;
 	const float _UVScaleLod = 0.02;
-	float3 worldUV = IN.worldPos * _UVScale;
-	float3 worldUVLod = IN.worldPos * _UVScaleLod;
+	float3 worldUV = IN.myWorldPos * _UVScale;
+	float3 worldUVLod = IN.myWorldPos * _UVScaleLod;
 
 	float4 splat0 = tex2D(_Splat0, worldUV.xz);
 	float4 splat1 = Tex2DTriplanar(_Splat1, worldUV, tpBlend);
@@ -111,18 +112,20 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 
 	// Todo: also need to sample heights with these lod uvs
 	splat0 = lerp(splat0, splat0Lod, distLerp);
-	splat1 = float4(1,1,1,0);//lerp(splat1, splat1Lod, distLerp);
+	splat1 = lerp(splat1, splat1Lod, distLerp);
 
 	height0 = lerp(height0, height0Lod, distLerp);
 	height1 = lerp(height1, height1Lod, distLerp);
 
+	// Todo: fresnel color, reflection source
 	splat0 = lerp(splat0, fixed4(1,1,1,0), IN.fresnel);
+	splat3 = lerp(splat3, fixed4(1,1,1,0), IN.fresnel);
 
-	// mixedDiffuse += splat_control.r * splat0;
-	// mixedDiffuse += splat_control.g * splat1;
-	mixedDiffuse = HeightBlend(splat0, height0, splat_control.r, splat1, height1, splat_control.g);
-	mixedDiffuse += splat_control.b * splat2;
-	mixedDiffuse += splat_control.a * splat3;
+	float4 diffuse = 0.0;
+	diffuse = HeightBlend(splat0, height0, splat_control.r, splat1, height1, splat_control.g);
+	diffuse += splat_control.b * splat2;
+	diffuse += splat_control.a * splat3;
+	mixedDiffuse = diffuse;
 
 	#ifdef _TERRAIN_NORMAL_MAP
 		float4 norm0 = tex2D(_Normal0, worldUV.xz);
@@ -133,21 +136,21 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 		float4 norm1Lod = Tex2DTriplanar(_Normal1, worldUVLod, tpBlend);
 
 		norm0 = lerp(norm0, norm0Lod, distLerp);
-		//norm1 = lerp(norm1, norm1Lod, distLerp);
+		norm1 = lerp(norm1, norm1Lod, distLerp);
 
-		fixed4 nrm = 0.0f;
-		nrm += splat_control.r * norm0;
-		nrm += splat_control.g * norm1;
-		nrm += splat_control.b * norm2;
-		nrm += splat_control.a * norm3;
-		mixedNormal = UnpackNormal(nrm);
+		float4 normal = 0.0;
+		normal += splat_control.r * norm0;
+		normal += splat_control.g * norm1;
+		normal += splat_control.b * norm2;
+		normal += splat_control.a * norm3;
+		mixedNormal = UnpackNormal(normal);
 	#endif
 }
 
 void SplatmapApplyWeight(inout fixed4 color, fixed weight)
 {
 	color.rgb *= weight;
-	color.a = 1.0f;
+	color.a = 1.0;
 }
 
 void SplatmapApplyFog(inout fixed4 color, Input IN)
