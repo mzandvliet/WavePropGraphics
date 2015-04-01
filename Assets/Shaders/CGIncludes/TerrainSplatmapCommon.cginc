@@ -3,10 +3,6 @@
 
 struct Input
 {
-	float2 uv_Splat0 : TEXCOORD0;
-	float2 uv_Splat1 : TEXCOORD1;
-	float2 uv_Splat2 : TEXCOORD2;
-	float2 uv_Splat3 : TEXCOORD3;
 	float2 tc_Control : TEXCOORD4;	// Not prefixing '_Contorl' with 'uv' allows a tighter packing of interpolators, which is necessary to support directional lightmap.
 	float fresnel;
 	float camDist;
@@ -59,7 +55,7 @@ fixed4 Tex2DTriplanar(sampler2D tex, float3 pos, float3 blend) {
 }
 
 float4 HeightBlend(float4 c1, float h1, float a1, float4 c2, float h2, float a2) {
-	float depth = 0.2;
+	float depth = 0.3;
 	float ma = max(h1+a1, h2+a2) - depth;
 	float b1 = max(h1+a1 - ma, 0);
 	float b2 = max(h2+a2 - ma, 0);
@@ -83,7 +79,7 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 		clip(weight - 0.0039 /*1/255*/);
 	#endif
 
-	float distLerp = min(1, max(0, (IN.camDist - 25.0) / 50.0));
+	float distLerp = saturate((IN.camDist - 25.0) / 50.0);
 
 	// The below loses the y component, making this effectively duoplanar mapping.
 	// Very useful for cliff textures with clear horizontal lines, where the y component would look awful.
@@ -94,8 +90,10 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 
 	const float _UVScale = 0.125;
 	const float _UVScaleLod = 0.02;
+	const float _UVScaleUnit = 0.001;
 	float3 worldUV = IN.myWorldPos * _UVScale;
 	float3 worldUVLod = IN.myWorldPos * _UVScaleLod;
+	float3 worldUVUnit = IN.myWorldPos * _UVScaleUnit;
 
 	float4 splat0 = tex2D(_Splat0, worldUV.xz);
 	float4 splat1 = Tex2DTriplanar(_Splat1, worldUV, tpBlend);
@@ -121,11 +119,18 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 	splat0 = lerp(splat0, fixed4(1,1,1,0), IN.fresnel);
 	splat3 = lerp(splat3, fixed4(1,1,1,0), IN.fresnel);
 
+	//Todo: do splatmap equalization offline. Snow needs a boost.
+	splat_control.a *= 2;
+	splat_control = normalize(splat_control);
+
 	float4 diffuse = 0.0;
 	diffuse = HeightBlend(splat0, height0, splat_control.r, splat1, height1, splat_control.g);
 	diffuse += splat_control.b * splat2;
 	diffuse += splat_control.a * splat3;
 	mixedDiffuse = diffuse;
+
+	float4 globalDiffuse = tex2D(_GlobalColorTex, worldUVUnit.xz);
+	mixedDiffuse *= lerp(float4(1,1,1,1), globalDiffuse, 0.5);
 
 	#ifdef _TERRAIN_NORMAL_MAP
 		float4 norm0 = tex2D(_Normal0, worldUV.xz);
@@ -143,6 +148,10 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 		normal += splat_control.g * norm1;
 		normal += splat_control.b * norm2;
 		normal += splat_control.a * norm3;
+
+		float4 globalNormal = tex2D(_GlobalNormalTex, worldUVUnit.xz);
+		normal = lerp(normal, globalNormal, saturate(IN.camDist * 0.001));
+
 		mixedNormal = UnpackNormal(normal);
 	#endif
 }

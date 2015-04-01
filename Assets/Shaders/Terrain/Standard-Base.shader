@@ -27,9 +27,9 @@ Shader "Hidden/TerrainEngine/Splatmap/Standard-Base" {
 		sampler2D _MainTex;
 		sampler2D _SpecularMetallicTex;
 
-		//#ifdef _TERRAIN_OVERRIDE_SMOOTHNESS
+		#ifdef _TERRAIN_OVERRIDE_SMOOTHNESS
 			half _Smoothness;
-		//#endif
+		#endif
 
 		struct Input {
 			float2 uv_MainTex;
@@ -39,11 +39,11 @@ Shader "Hidden/TerrainEngine/Splatmap/Standard-Base" {
 			half4 c = tex2D (_MainTex, IN.uv_MainTex);
 			o.Albedo = c.rgb;
 			o.Alpha = 1;
-			//#ifdef _TERRAIN_OVERRIDE_SMOOTHNESS
-				o.Smoothness = 0;// _Smoothness;
-			//#else
-			//	o.Smoothness = c.a;
-			//#endif
+			#ifdef _TERRAIN_OVERRIDE_SMOOTHNESS
+				o.Smoothness = _Smoothness;
+			#else
+				o.Smoothness = c.a;
+			#endif
 			o.Metallic = tex2D (_SpecularMetallicTex, IN.uv_MainTex).a;
 		}
 
