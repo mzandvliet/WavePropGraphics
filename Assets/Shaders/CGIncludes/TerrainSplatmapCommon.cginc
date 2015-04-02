@@ -108,9 +108,13 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 	float4 splat3 = 		tex2D(_Splat3, worldUV.xz);
 	float4 splat0Lod = 	tex2D(_Splat0, worldUVLod.xz);
 	float4 splat1Lod = 	Tex2DTriplanar(_Splat1, worldUVLod, tpBlend);
+	float4 splat2Lod = 	tex2D(_Splat2, worldUVLod.xz);
+	float4 splat3Lod = 	tex2D(_Splat3, worldUVLod.xz);
 
 	splat0 = lerp(splat0, splat0Lod, distLerp);
 	splat1 = lerp(splat1, splat1Lod, distLerp);
+	splat2 = lerp(splat2, splat2Lod, distLerp);
+	splat3 = lerp(splat3, splat3Lod, distLerp);
 
 	// Fresnel. Todo: configurable fresnel color
 	splat0 = lerp(splat0, fixed4(1,1,1,0), IN.fresnel);
