@@ -15,13 +15,11 @@ struct Input
 sampler2D _Control;
 float4 _Control_ST;
 sampler2D _Splat0,_Splat1,_Splat2,_Splat3;
-sampler2D _Height0,_Height1,_Height2,_Height3;
+//sampler2D _Heights;
 sampler2D _GlobalColorTex;
 sampler2D _GlobalNormalTex;
 
-#ifdef _TERRAIN_NORMAL_MAP
-	sampler2D _Normal0, _Normal1, _Normal2, _Normal3;
-#endif
+sampler2D _Normal0, _Normal1, _Normal2, _Normal3;
 
 float _FresnelBias;
 float _FresnelScale;
@@ -54,17 +52,28 @@ fixed4 Tex2DTriplanar(sampler2D tex, float3 uv, float3 blend) {
 		tex2D(tex, uv.xy) * blend.z;
 }
 
-float4 HeightBlend(float4 c1, float h1, float a1, float4 c2, float h2, float a2) {
+float3 UnpackNormals(float4 c) {
+	const float3 minusOne = float3(-1,-1,-1);
+	return minusOne + c.rgb * 2.0;
+}
+
+float4 HeightBlend(float4 c1, inout float h1, float4 c2, float h2) {
 	float depth = 0.2;
-	float ma = max(h1+a1, h2+a2) - depth;
-	float b1 = max(h1+a1 - ma, 0);
-	float b2 = max(h2+a2 - ma, 0);
+	float ma = max(h1, h2) - depth;
+	float b1 = max(h1 - ma, 0);
+	float b2 = max(h2 - ma, 0);
+	h1 = max(h1, h2);
 	return (c1 * b1 + c2 * b2) / (b1+b2);
 }
 
 void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 mixedDiffuse, inout fixed3 mixedNormal)
 {
 	splat_control = tex2D(_Control, IN.tc_Control);
+
+	//Todo: do splatmap equalization offline. Snow needs a boost.
+	splat_control.a *= 1.66;
+	splat_control = normalize(splat_control);
+
 	weight = dot(splat_control, half4(1,1,1,1));
 
 	#ifndef UNITY_PASS_DEFERRED
@@ -79,22 +88,20 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 		clip(weight - 0.0039 /*1/255*/);
 	#endif
 
-	float distLerp = saturate((IN.camDist - 25.0) / 50.0);
+	/* Calculate blending and lerping values */
 
-	// The below loses the y component, making this effectively duoplanar mapping.
-	// Very useful for cliff textures with clear horizontal lines, where the y component would look awful.
-	//float3 worldNormal = normalize(float3(IN.worldNormal.x, 0, IN.worldNormal.z));
-	float3 worldNormal = IN.myWorldNormal;
-	//float3 worldNormal = WorldNormalVector(IN, float3(0,0,1));
-	float3 tpBlend = abs(worldNormal);
+	float3 tpBlend = abs(IN.myWorldNormal); // Triplanar blend
+	float distLerp = saturate((IN.camDist - 50.0) / 100.0); // Distance based crossfade
 
-	const float _UVScale = 0.125;
-	const float _UVScaleLod = 0.02;
+	// Worldspace uvs (todo: make scale parameters)
+	const float _UVScale = 0.1;
+	const float _UVScaleLod = 0.01;
 	const float _UVScaleUnit = 0.001;
 	float3 worldUV = IN.myWorldPos * _UVScale;
 	float3 worldUVLod = IN.myWorldPos * _UVScaleLod;
 	float3 worldUVUnit = IN.myWorldPos * _UVScaleUnit;
 
+	/* Sample Diffuse */
 	float4 splat0 = 		tex2D(_Splat0, worldUV.xz);
 	float4 splat1 = 		Tex2DTriplanar(_Splat1, worldUV, tpBlend);
 	float4 splat2 = 		tex2D(_Splat2, worldUV.xz);
@@ -102,59 +109,56 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 	float4 splat0Lod = 	tex2D(_Splat0, worldUVLod.xz);
 	float4 splat1Lod = 	Tex2DTriplanar(_Splat1, worldUVLod, tpBlend);
 
-	// Todo: bake height value into alpha channel of diffuse textures (unless standard shader expects smoothness?)
-	float4 height0 = 		tex2D(_Height0, worldUV.xz);
-	float4 height1 = 		Tex2DTriplanar(_Height1, worldUV, tpBlend);
-	float4 height0Lod = tex2D(_Height0, worldUVLod.xz);
-	float4 height1Lod = Tex2DTriplanar(_Height1, worldUVLod, tpBlend);
-
-	// Todo: also need to sample heights with these lod uvs
 	splat0 = lerp(splat0, splat0Lod, distLerp);
 	splat1 = lerp(splat1, splat1Lod, distLerp);
 
-	height0 = lerp(height0, height0Lod, distLerp);
-	height1 = lerp(height1, height1Lod, distLerp);
-
-	// Todo: fresnel color, reflection source
+	// Fresnel. Todo: configurable fresnel color
 	splat0 = lerp(splat0, fixed4(1,1,1,0), IN.fresnel);
 	splat3 = lerp(splat3, fixed4(1,1,1,0), IN.fresnel);
 
-	//Todo: do splatmap equalization offline. Snow needs a boost.
-	//splat_control.a *= 2;
-	//splat_control = normalize(splat_control);
+	/* Sample Normals */
 
-	float4 diffuse = 0.0;
-	diffuse = HeightBlend(splat0, height0, splat_control.r, splat1, height1, splat_control.g);
-	diffuse += splat_control.b * splat2;
-	diffuse += splat_control.a * splat3;
+	float4 norm0 = 		tex2D(_Normal0, worldUV.xz);
+	float4 norm1 = 		Tex2DTriplanar(_Normal1, worldUV, tpBlend);
+	float4 norm2 = 		tex2D(_Normal2, worldUV.xz);
+	float4 norm3 = 		tex2D(_Normal3, worldUV.xz);
+	float4 norm0Lod = tex2D(_Normal0, worldUVLod.xz);
+	float4 norm1Lod = Tex2DTriplanar(_Normal1, worldUVLod, tpBlend);
+
+	norm0 = lerp(norm0, norm0Lod, distLerp);
+	norm1 = lerp(norm1, norm1Lod, distLerp);
+
+	// float4 heights = tex2D(_Heights, worldUV.xz);
+	// float4 heightsLod = tex2D(_Heights, worldUVLod.xz);
+	// heights = lerp(heights, heightsLod, distLerp);
+
+	/* Mix Diffuse */
+
+	float4 diffuse = splat0;
+	float lastHeight = norm0.a + splat_control.r;
+	diffuse = HeightBlend(diffuse, lastHeight, splat1, norm1.a + splat_control.g);
+	diffuse = HeightBlend(diffuse, lastHeight, splat2, norm2.a + splat_control.b);
+	diffuse = HeightBlend(diffuse, lastHeight, splat3, norm3.a + splat_control.a);
 	mixedDiffuse = diffuse;
 
 	float4 globalDiffuse = tex2D(_GlobalColorTex, worldUVUnit.xz);
-	mixedDiffuse *= lerp(float4(1,1,1,1), globalDiffuse, 0.5);
+	globalDiffuse *= 1.2; // Todo: do this equalization pass offline
+	mixedDiffuse *= lerp(float4(1,1,1,1), globalDiffuse, 0.75);
 
-	#ifdef _TERRAIN_NORMAL_MAP
-	 	// Todo: heightblend
-		float4 norm0 = 		tex2D(_Normal0, worldUV.xz);
-		float4 norm1 = 		Tex2DTriplanar(_Normal1, worldUV, tpBlend);
-		float4 norm2 = 		tex2D(_Normal2, worldUV.xz);
-		float4 norm3 = 		tex2D(_Normal3, worldUV.xz);
-		float4 norm0Lod = tex2D(_Normal0, worldUVLod.xz);
-		float4 norm1Lod = Tex2DTriplanar(_Normal1, worldUVLod, tpBlend);
+	/* Mix Normals */
 
-		norm0 = lerp(norm0, norm0Lod, distLerp);
-		norm1 = lerp(norm1, norm1Lod, distLerp);
+	// Todo: heightblend
+	float3 normal = 0.0;
+	normal += splat_control.r * UnpackNormals(norm0);
+	normal += splat_control.g * UnpackNormals(norm1);
+	normal += splat_control.b * UnpackNormals(norm2);
+	normal += splat_control.a * UnpackNormals(norm3);
+	normal = normalize(normal);
 
-		float4 normal = 0.0;
-		normal += splat_control.r * norm0;
-		normal += splat_control.g * norm1;
-		normal += splat_control.b * norm2;
-		normal += splat_control.a * norm3;
+	float4 globalNormal = tex2D(_GlobalNormalTex, worldUVUnit.xz);
+	normal = lerp(normal, UnpackNormal(globalNormal), saturate(IN.camDist * 0.001));
 
-		float4 globalNormal = tex2D(_GlobalNormalTex, worldUVUnit.xz);
-		normal = lerp(normal, globalNormal, saturate(IN.camDist * 0.001));
-
-		mixedNormal = UnpackNormal(normal);
-	#endif
+	mixedNormal = normal;
 }
 
 void SplatmapApplyWeight(inout fixed4 color, fixed weight)

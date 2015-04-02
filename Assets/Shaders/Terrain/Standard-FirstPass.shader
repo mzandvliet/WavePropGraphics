@@ -10,10 +10,7 @@ Shader "Nature/Terrain/Standard" {
 		_Normal2 ("Normal 2 (B)", 2D) = "bump" {}
 		_Normal1 ("Normal 1 (G)", 2D) = "bump" {}
 		_Normal0 ("Normal 0 (R)", 2D) = "bump" {}
-		_Height3 ("Height 3 (A)", 2D) = "white" {}
-		_Height2 ("Height 2 (B)", 2D) = "white" {}
-		_Height1 ("Height 1 (G)", 2D) = "white" {}
-		_Height0 ("Height 0 (R)", 2D) = "white" {}
+		//_Heights ("Height s (RGBA)", 2D) = "white" {}
 
 		[Gamma] _Metallic0 ("Metallic 0", Range(0.0, 1.0)) = 0.0
 		[Gamma] _Metallic1 ("Metallic 1", Range(0.0, 1.0)) = 0.0
