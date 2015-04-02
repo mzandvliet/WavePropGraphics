@@ -4,8 +4,8 @@
 struct Input
 {
 	float2 tc_Control : TEXCOORD4;	// Not prefixing '_Contorl' with 'uv' allows a tighter packing of interpolators, which is necessary to support directional lightmap.
-	float fresnel;
 	float camDist;
+	float3 camAngle;
 	float3 myWorldPos;
 	float3 myWorldNormal;
 	INTERNAL_DATA
@@ -35,9 +35,8 @@ void SplatmapVert(inout appdata_full v, out Input data)
 	data.myWorldPos = mul(_Object2World, v.vertex).xyz;
 	data.myWorldNormal = normalize(mul((float3x3)_Object2World, v.normal));
 	float3 camDelta = data.myWorldPos - _WorldSpaceCameraPos.xyz;
-	float3 i = normalize(camDelta);
+	data.camAngle = normalize(camDelta);
 	data.camDist = length(camDelta);
- 	data.fresnel = _FresnelBias + _FresnelScale * pow(1.0 + dot(i, data.myWorldNormal), _FresnelPower);
 
 #ifdef _TERRAIN_NORMAL_MAP
 	v.tangent.xyz = cross(v.normal, float3(0,0,1));
@@ -116,10 +115,6 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 	splat2 = lerp(splat2, splat2Lod, distLerp);
 	splat3 = lerp(splat3, splat3Lod, distLerp);
 
-	// Fresnel. Todo: configurable fresnel color
-	splat0 = lerp(splat0, fixed4(1,1,1,0), IN.fresnel);
-	splat3 = lerp(splat3, fixed4(1,1,1,0), IN.fresnel);
-
 	/* Sample Normals */
 
 	float4 norm0 = 		tex2D(_Normal0, worldUV.xz);
@@ -143,11 +138,10 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 	diffuse = HeightBlend(diffuse, lastHeight, splat1, norm1.a + splat_control.g);
 	diffuse = HeightBlend(diffuse, lastHeight, splat2, norm2.a + splat_control.b);
 	diffuse = HeightBlend(diffuse, lastHeight, splat3, norm3.a + splat_control.a);
-	mixedDiffuse = diffuse;
 
 	float4 globalDiffuse = tex2D(_GlobalColorTex, worldUVUnit.xz);
 	globalDiffuse *= 1.2; // Todo: do this equalization pass offline
-	mixedDiffuse *= lerp(float4(1,1,1,1), globalDiffuse, 0.75);
+	diffuse *= lerp(float4(1,1,1,1), globalDiffuse, 0.75);
 
 	/* Mix Normals */
 
@@ -162,6 +156,17 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 	float4 globalNormal = tex2D(_GlobalNormalTex, worldUVUnit.xz);
 	normal = lerp(normal, UnpackNormal(globalNormal), saturate(IN.camDist * 0.001));
 
+
+	/* Fresnel. Todo: configurable fresnel color */
+
+	//float fresnel = _FresnelBias + _FresnelScale * pow(1.0 + dot(IN.camAngle, normal), _FresnelPower);
+
+	//diffuse.r = lerp(diffuse.r, fixed4(1,1,1,0), fresnel);
+	//diffuse.b = lerp(diffuse.b, fixed4(1,1,1,0), fresnel);
+
+	/* Apply outputs */
+
+	mixedDiffuse = diffuse;
 	mixedNormal = normal;
 }
 
