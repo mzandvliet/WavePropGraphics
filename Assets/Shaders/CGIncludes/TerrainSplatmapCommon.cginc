@@ -47,15 +47,15 @@ void SplatmapVert(inout appdata_full v, out Input data)
 #endif
 }
 
-fixed4 Tex2DTriplanar(sampler2D tex, float3 pos, float3 blend) {
+fixed4 Tex2DTriplanar(sampler2D tex, float3 uv, float3 blend) {
 	return
-		tex2D(tex, pos.zy) * blend.x +
-		tex2D(tex, pos.xz) * blend.y +
-		tex2D(tex, pos.xy) * blend.z;
+		tex2D(tex, uv.zy) * blend.x +
+		tex2D(tex, uv.xz) * blend.y +
+		tex2D(tex, uv.xy) * blend.z;
 }
 
 float4 HeightBlend(float4 c1, float h1, float a1, float4 c2, float h2, float a2) {
-	float depth = 0.3;
+	float depth = 0.2;
 	float ma = max(h1+a1, h2+a2) - depth;
 	float b1 = max(h1+a1 - ma, 0);
 	float b2 = max(h2+a2 - ma, 0);
@@ -95,16 +95,16 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 	float3 worldUVLod = IN.myWorldPos * _UVScaleLod;
 	float3 worldUVUnit = IN.myWorldPos * _UVScaleUnit;
 
-	float4 splat0 = tex2D(_Splat0, worldUV.xz);
-	float4 splat1 = Tex2DTriplanar(_Splat1, worldUV, tpBlend);
-	float4 splat2 = tex2D(_Splat2, worldUV.xz);
-	float4 splat3 = tex2D(_Splat3, worldUV.xz);
-	float4 splat0Lod = tex2D(_Splat0, worldUVLod.xz);
-	float4 splat1Lod = Tex2DTriplanar(_Splat1, worldUVLod, tpBlend);
+	float4 splat0 = 		tex2D(_Splat0, worldUV.xz);
+	float4 splat1 = 		Tex2DTriplanar(_Splat1, worldUV, tpBlend);
+	float4 splat2 = 		tex2D(_Splat2, worldUV.xz);
+	float4 splat3 = 		tex2D(_Splat3, worldUV.xz);
+	float4 splat0Lod = 	tex2D(_Splat0, worldUVLod.xz);
+	float4 splat1Lod = 	Tex2DTriplanar(_Splat1, worldUVLod, tpBlend);
 
 	// Todo: bake height value into alpha channel of diffuse textures (unless standard shader expects smoothness?)
-	float4 height0 = tex2D(_Height0, worldUV.xz);
-	float4 height1 = Tex2DTriplanar(_Height1, worldUV, tpBlend);
+	float4 height0 = 		tex2D(_Height0, worldUV.xz);
+	float4 height1 = 		Tex2DTriplanar(_Height1, worldUV, tpBlend);
 	float4 height0Lod = tex2D(_Height0, worldUVLod.xz);
 	float4 height1Lod = Tex2DTriplanar(_Height1, worldUVLod, tpBlend);
 
@@ -120,8 +120,8 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 	splat3 = lerp(splat3, fixed4(1,1,1,0), IN.fresnel);
 
 	//Todo: do splatmap equalization offline. Snow needs a boost.
-	splat_control.a *= 2;
-	splat_control = normalize(splat_control);
+	//splat_control.a *= 2;
+	//splat_control = normalize(splat_control);
 
 	float4 diffuse = 0.0;
 	diffuse = HeightBlend(splat0, height0, splat_control.r, splat1, height1, splat_control.g);
@@ -133,10 +133,11 @@ void SplatmapMix(Input IN, out half4 splat_control, out half weight, out fixed4 
 	mixedDiffuse *= lerp(float4(1,1,1,1), globalDiffuse, 0.5);
 
 	#ifdef _TERRAIN_NORMAL_MAP
-		float4 norm0 = tex2D(_Normal0, worldUV.xz);
-		float4 norm1 = Tex2DTriplanar(_Normal1, worldUV, tpBlend);
-		float4 norm2 = tex2D(_Normal2, worldUV.xz);
-		float4 norm3 = tex2D(_Normal3, worldUV.xz);
+	 	// Todo: heightblend
+		float4 norm0 = 		tex2D(_Normal0, worldUV.xz);
+		float4 norm1 = 		Tex2DTriplanar(_Normal1, worldUV, tpBlend);
+		float4 norm2 = 		tex2D(_Normal2, worldUV.xz);
+		float4 norm3 = 		tex2D(_Normal3, worldUV.xz);
 		float4 norm0Lod = tex2D(_Normal0, worldUVLod.xz);
 		float4 norm1Lod = Tex2DTriplanar(_Normal1, worldUVLod, tpBlend);
 
