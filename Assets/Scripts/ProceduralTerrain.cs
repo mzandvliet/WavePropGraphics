@@ -33,6 +33,7 @@ public class ProceduralTerrain : MonoBehaviour {
 	    }
 
         if (_erode) {
+            Debug.Log("Erode");
             Erode(_map, _erosionConfig, _iterations);
             Apply();
             _erode = false;

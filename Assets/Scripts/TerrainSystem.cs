@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using CoherentNoise.Generation.Fractal;
 using UnityEngine;
+using UnityEngine.Profiling;
 
 /*
  * Make a pool of X^2 resolution vert meshes

@@ -1,3 +1,5 @@
+// Upgrade NOTE: replaced '_Object2World' with 'unity_ObjectToWorld'
+
 #ifndef TERRAIN_SPLATMAP_COMMON_CGINC_INCLUDED
 #define TERRAIN_SPLATMAP_COMMON_CGINC_INCLUDED
 
@@ -32,8 +34,8 @@ void SplatmapVert(inout appdata_full v, out Input data)
 	float4 pos = mul (UNITY_MATRIX_MVP, v.vertex);
 	UNITY_TRANSFER_FOG(data, pos);
 
-	data.myWorldPos = mul(_Object2World, v.vertex).xyz;
-	data.myWorldNormal = normalize(mul((float3x3)_Object2World, v.normal));
+	data.myWorldPos = mul(unity_ObjectToWorld, v.vertex).xyz;
+	data.myWorldNormal = normalize(mul((float3x3)unity_ObjectToWorld, v.normal));
 	float3 camDelta = data.myWorldPos - _WorldSpaceCameraPos.xyz;
 	data.camAngle = normalize(camDelta);
 	data.camDist = length(camDelta);

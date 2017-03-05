@@ -1,4 +1,6 @@
-﻿Shader "Custom/Terrain/TerrainTile" {
+﻿// Upgrade NOTE: replaced '_Object2World' with 'unity_ObjectToWorld'
+
+Shader "Custom/Terrain/TerrainTile" {
 	Properties {
 		_MainTex ("Base (RGB)", 2D) = "white" {}
 		_HeightTex ("Height Map", 2D) = "white" {}
@@ -93,7 +95,7 @@
 
 				float height = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(v.vertex.x, v.vertex.z, 0, 0)));
 
-				float4 wsVertex = mul(_Object2World, v.vertex); // world space vert for distance
+				float4 wsVertex = mul(unity_ObjectToWorld, v.vertex); // world space vert for distance
 				wsVertex.y = height * _HeightScale;
 
 				// Construct morph parameter based on distance to camera
@@ -109,7 +111,7 @@
 				o.uv = morphedVertex * _Scale / 16.0; // Todo: set resolution and uv-scale from script
 
 
-				wsVertex = mul(_Object2World, wsVertex); // Morphed vertex to world space
+				wsVertex = mul(unity_ObjectToWorld, wsVertex); // Morphed vertex to world space
 
 				// Sample height using morphed local unit space
 				height = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(morphedVertex.x, morphedVertex.y, 0, 0)));
