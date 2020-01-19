@@ -1,4 +1,6 @@
-﻿Shader "Custom/DiffuseLog" {
+﻿// Upgrade NOTE: replaced 'mul(UNITY_MATRIX_MVP,*)' with 'UnityObjectToClipPos(*)'
+
+Shader "Custom/DiffuseLog" {
 	Properties {
 		_MainTex ("Base (RGB)", 2D) = "white" {}
 		_Tint ("Tint (RGB)", Color) = (1,1,1,1)
@@ -38,7 +40,7 @@
 			v2f vert (appdata_base v) {
 				v2f o;
 
-				o.pos = mul(UNITY_MATRIX_MVP, v.vertex);
+				o.pos = UnityObjectToClipPos(v.vertex);
 
 				// from here: http://forum.unity3d.com/threads/custom-z-buffer-problem-on-mac-and-windows.146710/
 				//o.pos.z = (2.0 * log(C*v.vertex.z+offset) / log (C * far + offset) - 0) * v.vertex.w;

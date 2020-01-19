@@ -110,7 +110,6 @@ Shader "Custom/Terrain/TerrainTile" {
 				// Make splat texture tile
 				o.uv = morphedVertex * _Scale / 16.0; // Todo: set resolution and uv-scale from script
 
-
 				wsVertex = mul(unity_ObjectToWorld, wsVertex); // Morphed vertex to world space
 
 				// Sample height using morphed local unit space
