@@ -265,7 +265,7 @@ public class TerrainSystem : MonoBehaviour {
 
                 Vector3 lr = new Vector3(2f * stepSize, (heightR - heightL) * sampler.HeightScale, 0f);
                 Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, 2f * stepSize);
-                Vector3 normal = Vector3.Cross(bt, lr).normalized;
+                Vector3 normal = -Vector3.Cross(bt, lr).normalized;
                 
                 normals[index] = new Color(
                     0.5f + normal.x * 0.5f,
@@ -375,6 +375,6 @@ public class FractalHeightSampler : IHeightSampler {
 //        return 
 //            (0.5f + Mathf.Sin((x*Mathf.PI)*0.001f) * 0.5f) *
 //            (0.5f + Mathf.Sin((z * Mathf.PI) * 0.001f) * 0.5f);
-        return Mathf.Clamp01(_noise.GetValue(x, z, 0f) * 0.5f);
+        return 0.1f;//Mathf.Clamp01(_noise.GetValue(x, z, 0f) * 0.5f);
     }
 }
