@@ -118,6 +118,9 @@ public class TerrainTile : MonoBehaviour {
             new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3),
             new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3)
         );
+
+        var updateFlags = MeshUpdateFlags.Default;
+        // var updateFlags = MeshUpdateFlags.DontValidateIndices; // Saves on compute
         
         _mesh.SetIndexBufferParams(numIndices, IndexFormat.UInt32);
         _mesh.SetIndexBufferData(indices, 0, 0, numIndices);
@@ -125,9 +128,10 @@ public class TerrainTile : MonoBehaviour {
 
         _mesh.SetSubMesh(0, new SubMeshDescriptor(0, numIndices));
 
-        /* We can set these manually with the knowledge we have during content
-         * streaming (todo: autocalc bounds fails here for some reason, why?)
-         */
+        /*
+        Todo: Since we know the data we're rendering, don't leave Unity to
+        calculate the bounds, just supply them.
+        */
         // _mesh.bounds = new Bounds(new Vector3(8f, 8f, 8f), new Vector3(16f, 16f, 16f));
         
         _meshFilter.mesh = _mesh;

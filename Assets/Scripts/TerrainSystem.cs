@@ -210,12 +210,13 @@ public class TerrainSystem : MonoBehaviour {
 
                 GenerateTileHeights(heights, normals, numVerts, _heightSampler, position, node.Size.x);
 
-                var heightmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false, true);
-                var normalmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, true, true);
+                var heightmap = new Texture2D(numVerts, numVerts, TextureFormat.RGBA32, false, true); // Note: BA channels go unused right now, get creative!
+                var normalmap = new Texture2D(numVerts, numVerts, TextureFormat.RGFloat, true, true);
                 heightmap.wrapMode = TextureWrapMode.Clamp;
                 normalmap.wrapMode = TextureWrapMode.Clamp;
                 heightmap.filterMode = FilterMode.Point;
-                normalmap.filterMode = FilterMode.Bilinear;
+                normalmap.filterMode = FilterMode.Trilinear;
+                normalmap.anisoLevel = 4;
 
                 ToTexture(heights, heightmap);
                 ToTexture(normals, normalmap);
@@ -250,24 +251,29 @@ public class TerrainSystem : MonoBehaviour {
         /* Todo: can optimize normal generation by first sampling all heights, then using those to generate normals.
          * Only need procedural samples at edges. */
 
+        float delta = 0.01f * scale;
+
         for (int z = 0; z < numVerts; z++) {
             for (int x = 0; x < numVerts; x++) {
                 int index = z * numVerts + x;
 
-                float height = sampler.Sample(position.x + x * stepSize, position.z + z * stepSize);
+                float xPos = position.x + x * stepSize;
+                float zPos = position.z + z * stepSize;
+
+                float height = sampler.Sample(xPos, zPos);
                 
                 heights[index] = new Color32(
                     (byte)(Mathf.RoundToInt(height * 65535f) >> 8),
                     (byte)(Mathf.RoundToInt(height * 65535f)),
                     0,0);
 
-                float heightL = sampler.Sample(position.x + (x - 1) * stepSize, position.z + z * stepSize);
-                float heightR = sampler.Sample(position.x + (x + 1) * stepSize, position.z + z * stepSize);
-                float heightB = sampler.Sample(position.x + x * stepSize, position.z + (z - 1) * stepSize);
-                float heightT = sampler.Sample(position.x + x * stepSize, position.z + (z + 1) * stepSize);
+                float heightL = sampler.Sample(xPos + delta, zPos);
+                float heightR = sampler.Sample(xPos - delta, zPos);
+                float heightB = sampler.Sample(xPos, zPos - delta);
+                float heightT = sampler.Sample(xPos, zPos + delta);
 
-                Vector3 lr = new Vector3(stepSize, (heightR - heightL) * sampler.HeightScale, 0f);
-                Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, stepSize);
+                Vector3 lr = new Vector3(delta * 2f, (heightR - heightL) * sampler.HeightScale, 0f);
+                Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, delta * 2f);
                 Vector3 normal = Vector3.Cross(bt, lr).normalized;
                 
                 normals[index] = new Color(

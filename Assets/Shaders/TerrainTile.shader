@@ -76,8 +76,10 @@ Shader "Custom/Terrain/TerrainTile" {
 				return (c.r * 256 + c.g) / 257.0;
 			}
 
-			float3 UnpackNormalCustom(float4 c) {
-				return (c.xyz * 2.0) - float3(1,1,1);
+			half3 UnpackNormalCustom(float4 c) {
+				half3 n = (c.xyz * 2.0) - float3(1,1,1);
+				n.z = 1 - n.x - n.y;
+				return normalize(n);
 			}
 
 			// Todo: right now this is in unit quad space, so gridpos == vertex. Simplify.
@@ -133,9 +135,9 @@ Shader "Custom/Terrain/TerrainTile" {
 
 				half attenuation = LIGHT_ATTENUATION(i) * 2;
 				
-				float4 ambient = 0;
+				// float4 ambient = 0;
 				// float4 ambient = UNITY_LIGHTMODEL_AMBIENT * 2;
-				// float4 ambient = float4(ShadeSH9(half4(worldNormal,1)),1);
+				float4 ambient = float4(ShadeSH9(half4(worldNormal,1)),1);
 
 				half3 worldViewDir = normalize(UnityWorldSpaceViewDir(i.worldPos));
                 half3 worldRefl = reflect(-worldViewDir, worldNormal);
@@ -148,7 +150,7 @@ Shader "Custom/Terrain/TerrainTile" {
 				half4 diffuseTerm = NDotL * _LightColor0 * attenuation;
 
 				half4 diffuse = tex2D(_MainTex, i.uv1) * _MainColor;
-				half4 finalColor = (ambient + diffuseTerm) * diffuse * shadow + skyColor * 0.7;
+				half4 finalColor = (ambient + diffuseTerm) * diffuse * shadow + skyColor * 0.5;
 
 				return finalColor;
 			}
