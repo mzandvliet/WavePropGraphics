@@ -203,17 +203,17 @@ public class TerrainSystem : MonoBehaviour {
                 mesh.MeshRenderer.material.SetFloat("_HeightScale", _heightScale);
                 mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
 
-                GenerateTileFractal(heights, normals, numVerts, _heightSampler, position, node.Size.x);
+                GenerateTileHeights(heights, normals, numVerts, _heightSampler, position, node.Size.x);
 
                 var heightmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false, true);
                 var normalmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, true, true);
                 heightmap.wrapMode = TextureWrapMode.Clamp;
                 normalmap.wrapMode = TextureWrapMode.Clamp;
                 heightmap.filterMode = FilterMode.Point;
-                normalmap.filterMode = FilterMode.Bilinear;
+                normalmap.filterMode = FilterMode.Point;
 
-                LoadHeightsToTexture(heights, heightmap);
-                LoadHeightsToTexture(normals, normalmap);
+                ToTexture(heights, heightmap);
+                ToTexture(normals, normalmap);
                 mesh.MeshRenderer.material.SetTexture("_HeightTex", heightmap);
                 mesh.MeshRenderer.material.SetTexture("_NormalTex", normalmap);
 
@@ -239,15 +239,15 @@ public class TerrainSystem : MonoBehaviour {
 	    return tile;
 	}
 
-    private static void GenerateTileFractal(Color32[] heights, Color[] normals, int numVerts, IHeightSampler sampler, Vector3 position, float scale) {
-        float stepSize = scale / (numVerts-1); 
+    private static void GenerateTileHeights(Color32[] heights, Color[] normals, int numVerts, IHeightSampler sampler, Vector3 position, float scale) {
+        float stepSize = scale / (float)(numVerts-1);
 
         /* Todo: can optimize normal generation by first sampling all heights, then using those to generate normals.
          * Only need procedural samples at edges. */
 
-        for (int x = 0; x < numVerts; x++) {
-            for (int z = 0; z < numVerts; z++) {
-                int index = x + z*numVerts;
+        for (int z = 0; z < numVerts; z++) {
+            for (int x = 0; x < numVerts; x++) {
+                int index = z * numVerts + x;
 
                 float height = sampler.Sample(position.x + x * stepSize, position.z + z * stepSize);
                 
@@ -261,8 +261,8 @@ public class TerrainSystem : MonoBehaviour {
                 float heightB = sampler.Sample(position.x + x * stepSize, position.z + (z - 1) * stepSize);
                 float heightT = sampler.Sample(position.x + x * stepSize, position.z + (z + 1) * stepSize);
 
-                Vector3 lr = new Vector3(2f * stepSize, (heightR - heightL) * sampler.HeightScale, 0f);
-                Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, 2f * stepSize);
+                Vector3 lr = new Vector3(stepSize, (heightR - heightL) * sampler.HeightScale, 0f);
+                Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, stepSize);
                 Vector3 normal = Vector3.Cross(bt, lr).normalized;
                 
                 normals[index] = new Color(
@@ -274,12 +274,12 @@ public class TerrainSystem : MonoBehaviour {
         }
     }
 
-    private static void LoadHeightsToTexture(Color[] heights, Texture2D texture) {
+    private static void ToTexture(Color[] heights, Texture2D texture) {
         texture.SetPixels(heights);
         texture.Apply(true);
     }
 
-    private static void LoadHeightsToTexture(Color32[] heights, Texture2D texture) {
+    private static void ToTexture(Color32[] heights, Texture2D texture) {
         texture.SetPixels32(heights);
         texture.Apply(false);
     }
@@ -303,46 +303,6 @@ public class TerrainSystem : MonoBehaviour {
         Gizmos.DrawRay(camInfo.Position, Vector3.up * 1000f);
         Gizmos.DrawSphere(camInfo.Position, 1f);
     }
-
-    private TerrainTile _testTile;
-
-//    private void DrawTestTerrain() {
-//        int numVerts = _tileResolution + 1;
-//        Color[] heights = new Color[numVerts * numVerts];
-//        Color[] normals = new Color[numVerts * numVerts];
-//
-//        _heightTools = new HeightSamplingTools() {
-//            Sampler = new FractalHeightSampler(),
-//            Random = new System.Random()
-//        };
-//
-//        if (_testTile == null) {
-//            _testTile = CreateTile(16, _material);
-//        }
-//
-//        Vector3 scale = Vector3.one * 256f;
-//        Vector3 position = Vector3.zero;
-//
-//        _testTile.Transform.position = position;
-//        _testTile.Transform.localScale = scale;
-//        _testTile.MeshRenderer.material.SetFloat("_Scale", scale.x);
-//        _testTile.MeshRenderer.material.SetFloat("_HeightScale", 256f);
-//        _testTile.MeshRenderer.material.SetVector("_LerpRanges", new Vector2(128f, 256f));
-//
-//        GenerateTileFractal(heights, normals, numVerts, _heightTools, position, 256f, 256f);
-//
-//        var heightmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false);
-//        var normalmap = new Texture2D(numVerts, numVerts, TextureFormat.ARGB32, false);
-//        heightmap.wrapMode = TextureWrapMode.Clamp;
-//        normalmap.wrapMode = TextureWrapMode.Clamp;
-//        LoadHeightsToTexture(heights, heightmap);
-//        LoadHeightsToTexture(normals, normalmap);
-//        _testTile.MeshRenderer.material.SetTexture("_HeightTex", heightmap);
-//        _testTile.MeshRenderer.material.SetTexture("_NormalTex", normalmap);
-//
-//        _testTile.gameObject.name = "Terrain_NormalTest";
-//        _testTile.gameObject.SetActive(true);
-//    }
 }
 
 public interface IHeightSampler {
@@ -351,8 +311,6 @@ public interface IHeightSampler {
 }
 
 public class FractalHeightSampler : IHeightSampler {
-    /* Todo: this ridgenoise behaves weirdly. Output range seems unreliable. */
-
     private float _heightScale;
 
     public float HeightScale {
@@ -363,9 +321,10 @@ public class FractalHeightSampler : IHeightSampler {
         _heightScale = heightScale;
     }
 
+    /// Generates height values in normalized float range, [0,1]
     public float Sample(float x, float z) {
        return 
-           (0.5f + Mathf.Sin((x*Mathf.PI)*0.001f) * 0.5f) *
+           (0.5f + Mathf.Sin((x * Mathf.PI) * 0.001f) * 0.5f) *
            (0.5f + Mathf.Sin((z * Mathf.PI) * 0.001f) * 0.5f);
     }
 }

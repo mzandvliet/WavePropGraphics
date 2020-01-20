@@ -34,11 +34,9 @@ Shader "Custom/Terrain/TerrainTile" {
 
 			struct v2f {
 				float4 pos : POSITION;
-				float3 lightDir : TEXCOORD0;
-				float2 uv : TEXCOORD1;
-				float3 normal : TEXCOORD2;
-				float3 viewDir : TEXCOORD3;
-				LIGHTING_COORDS(4, 5)
+				float2 uv1 : TEXCOORD1; // diffuse
+				float2 uv2 : TEXCOORD2; // normals
+				LIGHTING_COORDS(3, 4) // todo: is this still needed? don't think so
 			};
 
 			inline float invLerp(float start, float end, float val) {
@@ -73,7 +71,7 @@ Shader "Custom/Terrain/TerrainTile" {
 				return (c.r * 256 + c.g) / 257.0;
 			}
 
-			float3 UnpackHeightNormal(float4 c) {
+			float3 UnpackNormalCustom(float4 c) {
 				return (c.xyz * 2.0) - float3(1,1,1);
 			}
 
@@ -90,36 +88,33 @@ Shader "Custom/Terrain/TerrainTile" {
 
 				/* shift odd-numbered vertices to even numbered vertices based on distance to camera */
 
-				float height = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(v.vertex.x, v.vertex.z, 0, 0)));
+				float2 localVertex = float2(v.vertex.x, v.vertex.z);
+
+				float height = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(localVertex, 0, 0)));
 
 				float4 wsVertex = mul(unity_ObjectToWorld, v.vertex); // world space vert for distance
 				wsVertex.y = height * _HeightScale;
 
 				// Construct morph parameter based on distance to camera
 				float distance = length(wsVertex.xyz - _WorldSpaceCameraPos);
-				float morph = 0.0;//invLerp(_LerpRanges.x, _LerpRanges.y, distance);
+				float morph = invLerp(_LerpRanges.x, _LerpRanges.y, distance);
 
 				// Morph in local unit space
-				float2 morphedVertex = morphVertex(float2(v.vertex.x, v.vertex.z), float2(v.vertex.x, v.vertex.z), morph);
+				float2 morphedVertex = morphVertex(localVertex, localVertex, morph);
 				wsVertex.x = morphedVertex.x;
 				wsVertex.z = morphedVertex.y;
 
-				// Make splat texture tile
-				o.uv = morphedVertex * _Scale / 16.0; // Todo: set resolution and uv-scale from script
+				o.uv1 = morphedVertex * _Scale / 16.0; // Todo: set resolution and uv-scale from script
+				o.uv2 = localVertex;
 
 				wsVertex = mul(unity_ObjectToWorld, wsVertex); // Morphed vertex to world space
 
 				// Sample height using morphed local unit space
-				height = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(morphedVertex.x, morphedVertex.y, 0, 0)));
+				height = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(morphedVertex,0,0)));
 				wsVertex.y = height * _HeightScale;
 
 				// To clip space
 				o.pos = mul(UNITY_MATRIX_VP, wsVertex);
-
-				o.lightDir = normalize(ObjSpaceLightDir(v.vertex));
-
-				float4 normal = tex2Dlod_bilinear(_NormalTex, float4(morphedVertex,0,0));
-				o.normal = UnpackHeightNormal(normal);
 
 				TRANSFER_VERTEX_TO_FRAGMENT(o);
 
@@ -127,9 +122,8 @@ Shader "Custom/Terrain/TerrainTile" {
 			}
 
 			half4 frag(v2f i) : COLOR {
-
-				float3 L = normalize(i.lightDir);
-				float3 N = normalize(i.normal);
+				float3 L = normalize(_WorldSpaceLightPos0.xyz);
+				float3 N = UnpackNormalCustom(tex2D(_NormalTex, i.uv2));
 
 				float attenuation = LIGHT_ATTENUATION(i) * 2;
 				float4 ambient = UNITY_LIGHTMODEL_AMBIENT * 2;
@@ -137,11 +131,9 @@ Shader "Custom/Terrain/TerrainTile" {
 				float NDotL = saturate(dot(N, L));
 				float4 diffuseTerm = NDotL * _LightColor0 * attenuation;
 
-				float4 diffuse = tex2D(_MainTex, i.uv);
+				float4 diffuse = tex2D(_MainTex, i.uv1);
 				float4 finalColor = (ambient + diffuseTerm) * diffuse;
 
-			//	return tex2D(_HeightTex, i.uv);
-				//return half4(N, 1.0);
 				return finalColor;
 			}
 
