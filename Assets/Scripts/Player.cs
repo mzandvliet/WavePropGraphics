@@ -2,6 +2,14 @@
 using System.Collections;
 
 public class Player : MonoBehaviour {
+    [SerializeField] private Camera _camera;
+
+    private void Awake() {
+        if (!_camera) {
+            _camera = gameObject.GetComponentInChildren<Camera>();
+        }
+    }
+
 	// Update is called once per frame
 	void Update () {
         float inputHorizontal = Input.GetAxis("Horizontal");
@@ -22,10 +30,15 @@ public class Player : MonoBehaviour {
     private bool _wireframe;
 
     private void OnPreRender() {
-        GL.wireframe = _wireframe;
+        UpdateWireframeMode();
     }
 
     private void OnPostRender() {
+        UpdateWireframeMode();
+    }
+    
+    private void UpdateWireframeMode() {
+        _camera.clearFlags = _wireframe ? CameraClearFlags.Color : CameraClearFlags.Skybox;
         GL.wireframe = _wireframe;
     }
 }

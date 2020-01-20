@@ -1,6 +1,7 @@
 ﻿
 Shader "Custom/Terrain/TerrainTile" {
 	Properties {
+		_MainColor ("Main Color Tint", Color) = (1,1,1,1) 
 		_MainTex ("Base (RGB)", 2D) = "white" {}
 		_HeightTex ("Height Map", 2D) = "white" {}
 		_NormalTex ("Normal Map", 2D) = "bump" {}
@@ -19,11 +20,12 @@ Shader "Custom/Terrain/TerrainTile" {
 
 			#pragma vertex vert
 			#pragma fragment frag
-			#pragma multi_compile_fwdbase
+			#pragma multi_compile_fwdbase nolightmap nodirlightmap nodynlightmap novertexlight
 
 			#include "UnityCG.cginc"
 			#include "AutoLight.cginc"
 
+			float4 _MainColor;
 			sampler2D _MainTex;
 			sampler2D _HeightTex;
 			sampler2D _NormalTex;
@@ -33,10 +35,13 @@ Shader "Custom/Terrain/TerrainTile" {
 			float4 _LightColor0;
 
 			struct v2f {
-				float4 pos : POSITION;
-				float2 uv1 : TEXCOORD1; // diffuse
-				float2 uv2 : TEXCOORD2; // normals
-				LIGHTING_COORDS(3, 4) // todo: is this still needed? don't think so
+				float4 pos : SV_POSITION;
+				float4 worldPos : POSITION1;
+				
+				float2 uv1 : TEXCOORD2; // diffuse
+				float2 uv2 : TEXCOORD3; // normals
+
+				SHADOW_COORDS(5) // put shadows data into TEXCOORD1
 			};
 
 			inline float invLerp(float start, float end, float val) {
@@ -114,31 +119,75 @@ Shader "Custom/Terrain/TerrainTile" {
 				wsVertex.y = height * _HeightScale;
 
 				// To clip space
+				o.worldPos = wsVertex;
 				o.pos = mul(UNITY_MATRIX_VP, wsVertex);
 
-				TRANSFER_VERTEX_TO_FRAGMENT(o);
+				TRANSFER_SHADOW(o)
 
 				return o;
 			}
 
 			half4 frag(v2f i) : COLOR {
-				float3 L = normalize(_WorldSpaceLightPos0.xyz);
-				float3 N = UnpackNormalCustom(tex2D(_NormalTex, i.uv2));
+				half3 L = normalize(_WorldSpaceLightPos0.xyz);
+				half3 worldNormal = UnpackNormalCustom(tex2D(_NormalTex, i.uv2));
 
-				float attenuation = LIGHT_ATTENUATION(i) * 2;
-				float4 ambient = UNITY_LIGHTMODEL_AMBIENT * 2;
+				half attenuation = LIGHT_ATTENUATION(i) * 2;
+				
+				float4 ambient = 0;
+				// float4 ambient = UNITY_LIGHTMODEL_AMBIENT * 2;
+				// float4 ambient = float4(ShadeSH9(half4(worldNormal,1)),1);
 
-				float NDotL = saturate(dot(N, L));
-				float4 diffuseTerm = NDotL * _LightColor0 * attenuation;
+				half3 worldViewDir = normalize(UnityWorldSpaceViewDir(i.worldPos));
+                half3 worldRefl = reflect(-worldViewDir, worldNormal);
+                half4 skyData = UNITY_SAMPLE_TEXCUBE(unity_SpecCube0, worldRefl);
+                half4 skyColor = half4(DecodeHDR (skyData, unity_SpecCube0_HDR), 1);
 
-				float4 diffuse = tex2D(_MainTex, i.uv1);
-				float4 finalColor = (ambient + diffuseTerm) * diffuse;
+				half shadow = SHADOW_ATTENUATION(i);
+
+				half NDotL = saturate(dot(worldNormal, L));
+				half4 diffuseTerm = NDotL * _LightColor0 * attenuation;
+
+				half4 diffuse = tex2D(_MainTex, i.uv1) * _MainColor;
+				half4 finalColor = (ambient + diffuseTerm) * diffuse * shadow + skyColor * 0.7;
 
 				return finalColor;
 			}
 
 			ENDCG
 		}
+
+		// shadow caster rendering pass, implemented manually
+        // using macros from UnityCG.cginc
+        // Pass
+        // {
+        //     Tags {"LightMode"="ShadowCaster"}
+
+        //     CGPROGRAM
+        //     #pragma vertex vert
+        //     #pragma fragment frag
+        //     #pragma multi_compile_shadowcaster
+        //     #include "UnityCG.cginc"
+
+        //     struct v2f { 
+        //         V2F_SHADOW_CASTER;
+        //     };
+
+        //     v2f vert(appdata_base v)
+        //     {
+        //         v2f o;
+        //         TRANSFER_SHADOW_CASTER_NORMALOFFSET(o)
+        //         return o;
+        //     }
+
+        //     float4 frag(v2f i) : SV_Target
+        //     {
+        //         SHADOW_CASTER_FRAGMENT(i)
+        //     }
+        //     ENDCG
+        // }
+
+		// shadow casting support
+        // UsePass "Legacy Shaders/VertexLit/SHADOWCASTER"
 	}
 	FallBack "Diffuse"
 }

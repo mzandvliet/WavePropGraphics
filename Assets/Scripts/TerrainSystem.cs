@@ -9,12 +9,16 @@ using UnityEngine.Profiling;
  *      LOD level is based on 3D distance to the camera
  * Get a mesh from the pool and stream data into it
  * 
- * Todo: 
+ * Todo:
+ * 
+ * Use TextureStreaming API? Texture2D.requestedMipmapLevel?
+ https://docs.unity3d.com/Manual/TextureStreaming-API.html
+ *
+ * Improve normal map popping
  *
  * Octaved height texture update from interactive wave simulation
  * 
  * Burstify all the things
- *
  * Rewrite Quadtree logic. Flat, data-driven, burst-friendly
  * 
  * Single mesh prototype, use material property blocks to assign textures and transforms
@@ -188,7 +192,6 @@ public class TerrainSystem : MonoBehaviour {
 
         for (int i = 0; i < toLoad.Count; i++) {
             var lodNodes = toLoad[i];
-            // const float lMin = 2f, lMax = 2.33f;
             const float lMin = 3f, lMax = 3.5f;
             var lerpRanges = new Vector4(_lodDistances[i] * lMin, _lodDistances[i] * lMax); // math.max(0,i-1)
 
@@ -327,11 +330,11 @@ public class FractalHeightSampler : IHeightSampler {
     public float Sample(float x, float z) {
         float h = 0f;
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < 10; i++) {
             h += 
-                (0.5f + Mathf.Sin((x * Mathf.PI) * 0.0011f * i) * 0.5f) *
-                (0.5f + Mathf.Sin((z * Mathf.PI) * 0.0011f * i) * 0.5f) *
-                (0.75f / (float)(1+i));
+                (0.5f + Mathf.Sin(0.73197f * ((i+1)*11) + (x * Mathf.PI) * 0.001093f * (i+1)) * 0.5f) *
+                (0.5f + Mathf.Cos(-1.1192f * ((i+1) *17) + (z * Mathf.PI) * 0.001317f * (i+1)) * 0.5f) *
+                (0.5f / (float)(1+i*2));
         }
        
 
