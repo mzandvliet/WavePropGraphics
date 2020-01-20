@@ -137,7 +137,7 @@ Shader "Custom/Terrain/TerrainTile" {
 				
 				// float4 ambient = 0;
 				// float4 ambient = UNITY_LIGHTMODEL_AMBIENT * 2;
-				float4 ambient = float4(ShadeSH9(half4(worldNormal,1)),1);
+				float4 ambient = float4(ShadeSH9(half4(worldNormal,1)),1) * 0.5;
 
 				half3 worldViewDir = normalize(UnityWorldSpaceViewDir(i.worldPos));
                 half3 worldRefl = reflect(-worldViewDir, worldNormal);

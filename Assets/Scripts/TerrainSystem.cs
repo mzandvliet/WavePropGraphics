@@ -246,7 +246,13 @@ public class TerrainSystem : MonoBehaviour {
 	}
 
     private static void GenerateTileHeights(Color32[] heights, Color[] normals, int numVerts, IHeightSampler sampler, Vector3 position, float scale) {
+        /*
+         Todo: These sampling step sizes are off somehow, at least for normals
+         I'm guessing it's my silly use of non-power-of-two textures, so let's
+         fix that off-by-one thing everywhere.
+         */
         float stepSize = scale / (float)(numVerts-1);
+        float stepSizeNormals = scale / (float)(numVerts);
 
         /* Todo: can optimize normal generation by first sampling all heights, then using those to generate normals.
          * Only need procedural samples at edges. */
@@ -266,6 +272,9 @@ public class TerrainSystem : MonoBehaviour {
                     (byte)(Mathf.RoundToInt(height * 65535f) >> 8),
                     (byte)(Mathf.RoundToInt(height * 65535f)),
                     0,0);
+
+                xPos = position.x + x * stepSizeNormals;
+                zPos = position.z + z * stepSizeNormals;
 
                 float heightL = sampler.Sample(xPos + delta, zPos);
                 float heightR = sampler.Sample(xPos - delta, zPos);
