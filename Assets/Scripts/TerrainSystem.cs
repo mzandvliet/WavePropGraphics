@@ -9,16 +9,20 @@ using UnityEngine.Profiling;
  * Get a mesh from the pool and stream data into it
  * 
  * Todo: 
+ *
+ * Burstify all the things
+ *
+ * Rewrite Quadtree logic. Flat, data-driven, burst-friendly
  * 
- * Use a noise lib that actually produces proper values. Geez.
+ * Single mesh prototype, use material property blocks to assign textures and transforms
+ * Shadow pass
  * 
- * Quadtree rendering algorithm
- * - Expand quaddree nodes based on distance rule and apply frustum culling
- * - Gather leaves into a list (this list contains all nodes that should be visible)
- * - Diff list with list from last frame
- * - Load/Unload tile data based on the diff
- * - Render the currently loaded tile set
- * 
+ * Increase distance, draw and detail scales
+ *
+ * Track accurate tile bounding box information for LOD selection
+ *
+ * Height texture update from interactive wave simulation
+ *
  * - Figure out how to disable the 4 quadrants of a tile without cpu overhead
  * 
  * - Separate culling passes to find visual and shadow caster tiles, use pass tags to render them differently
@@ -31,6 +35,7 @@ using UnityEngine.Profiling;
  * We certainly want to use predictive streaming.
  * 
  * Per pixel normals (with global normal maps). This is how you get low-res geometry to look high res.
+ * Blending stacked layers of normals will be an interesting challenge...
  */
 public class TerrainSystem : MonoBehaviour {
     [SerializeField] private Material _material;
@@ -56,6 +61,10 @@ public class TerrainSystem : MonoBehaviour {
     void Awake() {
         _lodDistances = QuadTree.GetLodDistances(_numLods, _lodZeroRange);
 
+        for (int i = 0; i < _lodDistances.Length; i++) {
+            Debug.LogFormat("LOD_{0} Dist: {1}", i, _lodDistances[i]);
+        }
+
         _visibleNodes = CreateList(_numLods);
         _loadedNodes = CreateList(_numLods);
         _toLoad = CreateList(_numLods);
@@ -65,8 +74,6 @@ public class TerrainSystem : MonoBehaviour {
 
         CreatePooledTiles();
         _activeMeshes = new Dictionary<QTNode, TerrainTile>();
-
-        //DrawTestTerrain();
     }
 
     private static IList<IList<QTNode>> CreateList(int length) {
@@ -84,7 +91,8 @@ public class TerrainSystem : MonoBehaviour {
     }
 
     private void CreatePooledTiles() {
-        const int numTiles = 360;
+        const int numTiles = 360; // Todo: how many do we really need at max?
+
         _meshPool = new Stack<TerrainTile>();
         for (int i = 0; i < numTiles; i++) {
             var tile = CreateTile("tile_"+i, _tileResolution, _material);
@@ -188,11 +196,13 @@ public class TerrainSystem : MonoBehaviour {
 
         for (int i = 0; i < toLoad.Count; i++) {
             var lodNodes = toLoad[i];
-            var lerpRanges = new Vector4(_lodDistances[i] * 2f, _lodDistances[i] * 2.33f);
+            // const float lMin = 2.0f, lMax = 2.33f;
+            const float lMin = 2.33f, lMax = 3.0f;
+            var lerpRanges = new Vector4(_lodDistances[i] * lMin, _lodDistances[i] * lMax);
 
             for (int j = 0; j < lodNodes.Count; j++) {
                 var node = lodNodes[j];
-                var mesh = _meshPool.Pop();
+                var mesh = _meshPool.Pop(); // Should be a TilePool, where Tile = { Transform, MatPropBlock, Tex2d, Tex2d }
                 _activeMeshes.Add(node, mesh);
 
                 Vector3 position = new Vector3(node.Center.x - node.Size.x * 0.5f, 0f, node.Center.z - node.Size.z * 0.5f);
@@ -210,7 +220,7 @@ public class TerrainSystem : MonoBehaviour {
                 heightmap.wrapMode = TextureWrapMode.Clamp;
                 normalmap.wrapMode = TextureWrapMode.Clamp;
                 heightmap.filterMode = FilterMode.Point;
-                normalmap.filterMode = FilterMode.Point;
+                normalmap.filterMode = FilterMode.Bilinear;
 
                 ToTexture(heights, heightmap);
                 ToTexture(normals, normalmap);

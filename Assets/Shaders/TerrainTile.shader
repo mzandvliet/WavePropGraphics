@@ -105,7 +105,7 @@ Shader "Custom/Terrain/TerrainTile" {
 				wsVertex.z = morphedVertex.y;
 
 				o.uv1 = morphedVertex * _Scale / 16.0; // Todo: set resolution and uv-scale from script
-				o.uv2 = localVertex;
+				o.uv2 = morphedVertex;
 
 				wsVertex = mul(unity_ObjectToWorld, wsVertex); // Morphed vertex to world space
 

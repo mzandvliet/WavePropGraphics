@@ -5,14 +5,9 @@ using System.Collections.Generic;
  * Should we handle streaming and culling separately? If we temporarilly look up at the sky (no terrain drawn)
  * we don't want to *render* terrain, but we probably do want to have it *loaded* and ready to go. Stream based
  * on where we *are*, not so much based on what we're *looking at*. Only exception is zooming through a scope, really.
- *
- * Performance/Scaling thought: if a (purely functional) procedural source is used, resolution is arbitrary. Let players set range and resolution to arbitrary levels.
- * 
+
  * Todo:
- * - Implement partial child expansion
- * - Implement frustum culling
- *      - Render camera
- *      - Light sources
+ * - Hook into Unity's new sphere culling api??
  */
 
 public static class QuadTree {
@@ -59,15 +54,15 @@ public static class QuadTree {
     }
 
     private static bool Intersect(QTNode node, CameraInfo camInfo, float range) {
-        return Intersect(node.Position, node.Position + node.Size, camInfo.Position, range);
+        return IntersectBoxSphere(node.Position, node.Position + node.Size, camInfo.Position, range);
     }
 
-    private static bool Intersect(Vector3 bMin, Vector3 bMax, Vector3 sPos, float sRadius) {
-        float sqrRadius = Sqr(sRadius);
+    private static bool IntersectBoxSphere(Vector3 bMin, Vector3 bMax, Vector3 spherePos, float sphereRadius) {
+        float sqrRadius = Sqr(sphereRadius);
         float minDist = 0f;
         for (int i = 0; i < 3; i++) {
-            if      (sPos[i] < bMin[i]) minDist += Sqr(sPos[i] - bMin[i]);
-            else if (sPos[i] > bMax[i]) minDist += Sqr(sPos[i] - bMax[i]);
+            if      (spherePos[i] < bMin[i]) minDist += Sqr(spherePos[i] - bMin[i]);
+            else if (spherePos[i] > bMax[i]) minDist += Sqr(spherePos[i] - bMax[i]);
         }
         return minDist <= sqrRadius;
     }
