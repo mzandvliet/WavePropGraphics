@@ -1,7 +1,13 @@
 ﻿using UnityEngine;
 using System.Collections.Generic;
+using Unity.Mathematics;
 
 /*
+ * Quad tree expansion based on the procedural data is easily the most dodgy aspect of this toy project
+ * right now.
+ *
+ * --
+ *
  * Should we handle streaming and culling separately? If we temporarilly look up at the sky (no terrain drawn)
  * we don't want to *render* terrain, but we probably do want to have it *loaded* and ready to go. Stream based
  * on where we *are*, not so much based on what we're *looking at*. Only exception is zooming through a scope, really.
@@ -40,7 +46,7 @@ public static class QuadTree {
         }
 
         // If not, we should create children if we're in LOD range
-        if (Intersect(node, cam, lodDistances[currentLod])) {
+        if (Intersect(node, cam, lodDistances[math.max(0,currentLod-1)])) {
             node.Expand(sampler);
 
             for (int i = 0; i < node.Children.Length; i++) {
@@ -152,7 +158,7 @@ public class QTNode {
     private void FitHeightSamples(IHeightSampler sampler) {
         /* Todo: move this logic out of this class, too much business going on */
 
-        const int samplingResolution = 4;
+        const int samplingResolution = 8;
 
         float highest = float.MinValue;
         float lowest = float.MaxValue;

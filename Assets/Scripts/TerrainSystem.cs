@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Profiling;
 
@@ -10,6 +11,8 @@ using UnityEngine.Profiling;
  * 
  * Todo: 
  *
+ * Octaved height texture update from interactive wave simulation
+ * 
  * Burstify all the things
  *
  * Rewrite Quadtree logic. Flat, data-driven, burst-friendly
@@ -21,21 +24,10 @@ using UnityEngine.Profiling;
  *
  * Track accurate tile bounding box information for LOD selection
  *
- * Height texture update from interactive wave simulation
- *
  * - Figure out how to disable the 4 quadrants of a tile without cpu overhead
  * 
  * - Separate culling passes to find visual and shadow caster tiles, use pass tags to render them differently
  *      - https://gist.github.com/pigeon6/4237385
- * 
- *
- * The higher above the terrain you are, the fewer high-res patches are loaded. These could then be used so show even farther away terrain.
- * 
- * We might want to do smooth lod transition based on an event (such as load complete) instead of distance to camera.
- * We certainly want to use predictive streaming.
- * 
- * Per pixel normals (with global normal maps). This is how you get low-res geometry to look high res.
- * Blending stacked layers of normals will be an interesting challenge...
  */
 public class TerrainSystem : MonoBehaviour {
     [SerializeField] private Material _material;
@@ -196,9 +188,9 @@ public class TerrainSystem : MonoBehaviour {
 
         for (int i = 0; i < toLoad.Count; i++) {
             var lodNodes = toLoad[i];
-            // const float lMin = 2.0f, lMax = 2.33f;
-            const float lMin = 2.33f, lMax = 3.0f;
-            var lerpRanges = new Vector4(_lodDistances[i] * lMin, _lodDistances[i] * lMax);
+            // const float lMin = 2f, lMax = 2.33f;
+            const float lMin = 3f, lMax = 3.5f;
+            var lerpRanges = new Vector4(_lodDistances[i] * lMin, _lodDistances[i] * lMax); // math.max(0,i-1)
 
             for (int j = 0; j < lodNodes.Count; j++) {
                 var node = lodNodes[j];
@@ -333,8 +325,17 @@ public class FractalHeightSampler : IHeightSampler {
 
     /// Generates height values in normalized float range, [0,1]
     public float Sample(float x, float z) {
-       return 
-           (0.5f + Mathf.Sin((x * Mathf.PI) * 0.001f) * 0.5f) *
-           (0.5f + Mathf.Sin((z * Mathf.PI) * 0.001f) * 0.5f);
+        float h = 0f;
+
+        for (int i = 0; i < 4; i++) {
+            h += 
+                (0.5f + Mathf.Sin((x * Mathf.PI) * 0.0011f * i) * 0.5f) *
+                (0.5f + Mathf.Sin((z * Mathf.PI) * 0.0011f * i) * 0.5f) *
+                (0.75f / (float)(1+i));
+        }
+       
+
+        return h;
+           
     }
 }
