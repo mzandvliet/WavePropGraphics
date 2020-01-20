@@ -1,4 +1,13 @@
 ﻿using UnityEngine;
+using UnityEngine.Rendering;
+using Unity.Collections;
+using Unity.Jobs;
+using Unity.Mathematics;
+
+public struct Vertex {
+    public float3 position;
+    public float3 normal;
+}
 
 public class TerrainTile : MonoBehaviour {
     private Transform _transform;
@@ -53,6 +62,7 @@ public class TerrainTile : MonoBehaviour {
 
         if (!Mathf.IsPowerOfTwo(resolution)) {
             resolution = Mathf.ClosestPowerOfTwo(resolution);
+            Debug.LogWarning("Got incompatible tile resolution, rounding resolution to nearest power of two...");
         }
 
         _resolution = resolution;
@@ -63,45 +73,55 @@ public class TerrainTile : MonoBehaviour {
     }
 
     private void CreateMesh(int resolution) {
-        int vertCount = (resolution + 1);
-        _mesh = new Mesh();
+        int vertsPerDim = (resolution + 1);
+        int numVerts = vertsPerDim * vertsPerDim;
+        int numIndices = resolution * resolution * 2 * 3;
 
-        var vertices = new Vector3[vertCount*vertCount];
-        var triangles = new int[resolution * resolution * 2 * 3];
-        var uv = new Vector2[vertCount * vertCount];
-        var normals = new Vector3[vertCount * vertCount];
+        var vertices = new NativeArray<Vertex>(numVerts, Allocator.Temp);
+        var indices = new NativeArray<uint>(numIndices, Allocator.Temp); // (ushort)?
 
-        /* Create vertices */
+        for (int y = 0; y < vertsPerDim; y++) {
+            for (int x = 0; x < vertsPerDim; x++) {
+                vertices[vertsPerDim * y + x] = new Vertex {
+                    position = new float3(x/(float)resolution, 0f, y/(float)resolution),
+                    normal = new float3(0,1,0)
+                };
 
-        for (int x = 0; x < vertCount; x++) {
-            for (int y = 0; y < vertCount; y++) {
-                vertices[x + vertCount*y] = new Vector3(x/(float)resolution, 0f, y/(float)resolution);
-                uv[x + vertCount * y] = new Vector2(x/(float)resolution, y/(float)resolution);
-                normals[x + vertCount * y] = Vector3.up;
+                Debug.LogFormat("[{0},{1}]: {2}", x, y , vertices[(vertsPerDim * y + x)].position);
             }
         }
 
-        /* Create triangle indices */
+        CreateIndices(indices, resolution, name == "tile_0");
 
-        int index = 0;
-        int halfRes = resolution/2;
+        // int index = 0;
+        // int halfRes = resolution/2;
 
-        CreateIndicesForQuadrant(triangles, vertCount, ref index, 0, halfRes, 0, halfRes);
-        _indexEndTl = index;
+        // CreateIndicesForQuadrant(indices, vertsPerDim, ref index, 0, halfRes, 0, halfRes);
+        // _indexEndTl = index;
 
-        CreateIndicesForQuadrant(triangles, vertCount, ref index, 0, halfRes, halfRes, resolution);
-        _indexEndTr = index;
+        // CreateIndicesForQuadrant(indices, vertsPerDim, ref index, 0, halfRes, halfRes, resolution);
+        // _indexEndTr = index;
 
-        CreateIndicesForQuadrant(triangles, vertCount, ref index, halfRes, resolution, 0, halfRes);
-        _indexEndBl = index;
+        // CreateIndicesForQuadrant(indices, vertsPerDim, ref index, halfRes, resolution, 0, halfRes);
+        // _indexEndBl = index;
 
-        CreateIndicesForQuadrant(triangles, vertCount, ref index, halfRes, resolution, halfRes, resolution);
-        _indexEndBr = index;
+        // CreateIndicesForQuadrant(indices, vertsPerDim, ref index, halfRes, resolution, halfRes, resolution);
+        // _indexEndBr = index;
 
-        _mesh.vertices = vertices;
-        _mesh.triangles = triangles;
-        _mesh.normals = normals;
-        _mesh.uv = uv;
+        _mesh = new Mesh();
+        _mesh.hideFlags = HideFlags.DontSave;
+
+        _mesh.SetVertexBufferParams(
+            numVerts,
+            new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3),
+            new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3)
+        );
+
+        _mesh.SetVertexBufferData(vertices, 0, 0, numVerts);        
+        _mesh.SetIndexBufferParams(numIndices, IndexFormat.UInt32);
+        _mesh.SetIndexBufferData(indices, 0, 0, numIndices);
+
+        _mesh.SetSubMesh(0, new SubMeshDescriptor(0, numVerts));
 
         /* We can set these manually with the knowledge we have during content
          * streaming (todo: autocalc bounds fails here for some reason, why?)
@@ -111,16 +131,39 @@ public class TerrainTile : MonoBehaviour {
         _meshFilter.mesh = _mesh;
     }
 
-    private static void CreateIndicesForQuadrant(int[] triangles, int vertCount, ref int index, int yStart, int yEnd, int xStart, int xEnd) {
-        for (int y = xStart; y < xEnd; y++) {
-            for (int x = yStart; x < yEnd; x++) {
-                triangles[index++] = x + vertCount * (y + 1);
-                triangles[index++] = (x + 1) + vertCount * y;
-                triangles[index++] = x + vertCount * y;
+    // We create the tile as 4 quadrants, for easy deactivation later.
+    // private static void CreateIndicesForQuadrant(NativeArray<uint> triangles, int vertsPerDim, ref int index, int yStart, int yEnd, int xStart, int xEnd) {
+    //     for (int y = yStart; y < yEnd; y++) {
+    //         for (int x = xStart; x < xEnd; x++) {
+    //             triangles[index++] = (uint)((x + 0) + vertsPerDim * (y + 1));
+    //             triangles[index++] = (uint)((x + 1) + vertsPerDim * (y + 0));
+    //             triangles[index++] = (uint)((x + 0) + vertsPerDim * (y + 0));
 
-                triangles[index++] = x + vertCount * (y + 1);
-                triangles[index++] = (x + 1) + vertCount * (y + 1);
-                triangles[index++] = (x + 1) + vertCount * y;
+    //             triangles[index++] = (uint)((x + 0) + vertsPerDim * (y + 1));
+    //             triangles[index++] = (uint)((x + 1) + vertsPerDim * (y + 1));
+    //             triangles[index++] = (uint)((x + 1) + vertsPerDim * (y + 0));
+    //         }
+    //     }
+    // }
+
+    private static void CreateIndices(NativeArray<uint> triangles, int resolution, bool debug) {
+        int vertsPerDim = resolution + 1;
+        int index = 0;
+        for (int y = 0; y < resolution; y++) {
+            for (int x = 0; x < resolution; x++) {
+                triangles[index++] = (uint)((x + 0) + vertsPerDim * (y + 1));
+                triangles[index++] = (uint)((x + 1) + vertsPerDim * (y + 0));
+                triangles[index++] = (uint)((x + 0) + vertsPerDim * (y + 0));
+
+                triangles[index++] = (uint)((x + 0) + vertsPerDim * (y + 1));
+                triangles[index++] = (uint)((x + 1) + vertsPerDim * (y + 1));
+                triangles[index++] = (uint)((x + 1) + vertsPerDim * (y + 0));
+
+                // if (debug) {
+                //     for (int i = index-6; i < index; i++) {
+                //         Debug.Log(index + ": " + triangles[i]);
+                //     }
+                // }
             }
         }
     }

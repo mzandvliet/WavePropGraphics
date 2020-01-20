@@ -1,5 +1,4 @@
-﻿// Upgrade NOTE: replaced '_Object2World' with 'unity_ObjectToWorld'
-
+﻿
 Shader "Custom/Terrain/TerrainTile" {
 	Properties {
 		_MainTex ("Base (RGB)", 2D) = "white" {}
@@ -24,7 +23,6 @@ Shader "Custom/Terrain/TerrainTile" {
 
 			#include "UnityCG.cginc"
 			#include "AutoLight.cginc"
-			#include "LogDepth.cginc"
 
 			sampler2D _MainTex;
 			sampler2D _HeightTex;
@@ -40,8 +38,7 @@ Shader "Custom/Terrain/TerrainTile" {
 				float2 uv : TEXCOORD1;
 				float3 normal : TEXCOORD2;
 				float3 viewDir : TEXCOORD3;
-				float flogz : TEXCOORD4;
-				LIGHTING_COORDS(5, 6)
+				LIGHTING_COORDS(4, 5)
 			};
 
 			inline float invLerp(float start, float end, float val) {
@@ -55,8 +52,8 @@ Shader "Custom/Terrain/TerrainTile" {
 			 * or by evaluating procedural height function after morphing vertex
 			 */
 			float4 tex2Dlod_bilinear(sampler2D tex, float4 uv) {
-				const float g_resolution = 16.0;
-				const float g_resolutionInv = 1/16.0;
+				const float g_resolution = 16.0; // Todo: set from script
+				const float g_resolutionInv = 1/g_resolution;
 
 				float2 pixelFrac = frac(uv.xy * g_resolution);
 
@@ -100,7 +97,7 @@ Shader "Custom/Terrain/TerrainTile" {
 
 				// Construct morph parameter based on distance to camera
 				float distance = length(wsVertex.xyz - _WorldSpaceCameraPos);
-				float morph = invLerp(_LerpRanges.x, _LerpRanges.y, distance);
+				float morph = 0.0;//invLerp(_LerpRanges.x, _LerpRanges.y, distance);
 
 				// Morph in local unit space
 				float2 morphedVertex = morphVertex(float2(v.vertex.x, v.vertex.z), float2(v.vertex.x, v.vertex.z), morph);
@@ -118,8 +115,6 @@ Shader "Custom/Terrain/TerrainTile" {
 
 				// To clip space
 				o.pos = mul(UNITY_MATRIX_VP, wsVertex);
-				// Transform logarithmically
-				//o.flogz = TransformVertexLog(o.pos);
 
 				o.lightDir = normalize(ObjSpaceLightDir(v.vertex));
 
@@ -131,9 +126,7 @@ Shader "Custom/Terrain/TerrainTile" {
 				return o;
 			}
 
-			half4 frag(v2f i) : COLOR { //out float depth:DEPTH
-				// Transform logarithmically
-				//depth = GetFragmentDepthLog(i.flogz);
+			half4 frag(v2f i) : COLOR {
 
 				float3 L = normalize(i.lightDir);
 				float3 N = normalize(i.normal);

@@ -1,6 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using CoherentNoise.Generation.Fractal;
+﻿using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Profiling;
 
@@ -89,7 +87,7 @@ public class TerrainSystem : MonoBehaviour {
         const int numTiles = 360;
         _meshPool = new Stack<TerrainTile>();
         for (int i = 0; i < numTiles; i++) {
-            var tile = CreateTile(_tileResolution, _material);
+            var tile = CreateTile("tile_"+i, _tileResolution, _material);
             tile.Transform.parent = transform;
             tile.gameObject.SetActive(false);
             _meshPool.Push(tile);
@@ -229,8 +227,8 @@ public class TerrainSystem : MonoBehaviour {
         }
     }
 
-    private static TerrainTile CreateTile(int resolution, Material material) {
-        var tileObject = new GameObject();
+    private static TerrainTile CreateTile(string name, int resolution, Material material) {
+        var tileObject = new GameObject(name);
         var tile = tileObject.AddComponent<TerrainTile>();
         tile.Create(resolution);
 	    tile.MeshRenderer.material = material;
@@ -355,7 +353,6 @@ public interface IHeightSampler {
 public class FractalHeightSampler : IHeightSampler {
     /* Todo: this ridgenoise behaves weirdly. Output range seems unreliable. */
 
-    private RidgeNoise _noise;
     private float _heightScale;
 
     public float HeightScale {
@@ -364,18 +361,11 @@ public class FractalHeightSampler : IHeightSampler {
 
     public FractalHeightSampler(float heightScale) {
         _heightScale = heightScale;
-
-        _noise = new RidgeNoise(1234);
-        _noise.Frequency = 0.001f;
-        _noise.Exponent = 0.5f;
-        _noise.Gain = 1f;
     }
 
     public float Sample(float x, float z) {
-    //    return 
-    //        (0.5f + Mathf.Sin((x*Mathf.PI)*0.001f) * 0.5f) *
-    //        (0.5f + Mathf.Sin((z * Mathf.PI) * 0.001f) * 0.5f);
-        
-        return Mathf.Clamp01(_noise.GetValue(x, z, 0f) * 0.5f);
+       return 
+           (0.5f + Mathf.Sin((x*Mathf.PI)*0.001f) * 0.5f) *
+           (0.5f + Mathf.Sin((z * Mathf.PI) * 0.001f) * 0.5f);
     }
 }
