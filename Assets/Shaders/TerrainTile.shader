@@ -41,7 +41,7 @@ Shader "Custom/Terrain/TerrainTile" {
 				float2 uv1 : TEXCOORD2; // diffuse
 				float2 uv2 : TEXCOORD3; // normals
 
-				// SHADOW_COORDS(5) // put shadows data into TEXCOORD1
+				SHADOW_COORDS(5) // put shadows data into TEXCOORD1
 			};
 
 			inline float invLerp(float start, float end, float val) {
@@ -55,8 +55,8 @@ Shader "Custom/Terrain/TerrainTile" {
 			 * or by evaluating procedural height function after morphing vertex
 			 */
 			float4 tex2Dlod_bilinear(sampler2D tex, float4 uv) {
-				const float g_resolution = 16.0 - 1.0; // Todo: set from script
-				const float g_resolutionInv = 1.0 / g_resolution;
+				const float g_resolution = 16.0; // Todo: set from script
+				const float g_resolutionInv = 1/g_resolution;
 
 				float2 pixelFrac = frac(uv.xy * g_resolution);
 
@@ -111,7 +111,7 @@ Shader "Custom/Terrain/TerrainTile" {
 				wsVertex.x = morphedVertex.x;
 				wsVertex.z = morphedVertex.y;
 
-				o.uv1 = morphedVertex * _Scale / (16.0-1.0); // Todo: set resolution and uv-scale from script
+				o.uv1 = morphedVertex * _Scale / 16.0; // Todo: set resolution and uv-scale from script
 				o.uv2 = morphedVertex;
 
 				wsVertex = mul(unity_ObjectToWorld, wsVertex); // Morphed vertex to world space
@@ -124,7 +124,7 @@ Shader "Custom/Terrain/TerrainTile" {
 				o.worldPos = wsVertex;
 				o.pos = mul(UNITY_MATRIX_VP, wsVertex);
 
-				// TRANSFER_SHADOW(o)
+				TRANSFER_SHADOW(o)
 
 				return o;
 			}
@@ -157,6 +157,39 @@ Shader "Custom/Terrain/TerrainTile" {
 
 			ENDCG
 		}
+
+		// shadow caster rendering pass, implemented manually
+        // using macros from UnityCG.cginc
+        // Pass
+        // {
+        //     Tags {"LightMode"="ShadowCaster"}
+
+        //     CGPROGRAM
+        //     #pragma vertex vert
+        //     #pragma fragment frag
+        //     #pragma multi_compile_shadowcaster
+        //     #include "UnityCG.cginc"
+
+        //     struct v2f { 
+        //         V2F_SHADOW_CASTER;
+        //     };
+
+        //     v2f vert(appdata_base v)
+        //     {
+        //         v2f o;
+        //         TRANSFER_SHADOW_CASTER_NORMALOFFSET(o)
+        //         return o;
+        //     }
+
+        //     float4 frag(v2f i) : SV_Target
+        //     {
+        //         SHADOW_CASTER_FRAGMENT(i)
+        //     }
+        //     ENDCG
+        // }
+
+		// shadow casting support
+        // UsePass "Legacy Shaders/VertexLit/SHADOWCASTER"
 	}
 	FallBack "Diffuse"
 }
