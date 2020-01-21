@@ -77,38 +77,40 @@ public class TerrainTile : MonoBehaviour {
     }
 
     private void CreateMesh(int resolution) {
-        int vertsPerDim = (resolution + 1);
-        int numVerts = vertsPerDim * vertsPerDim;
-        int numIndices = resolution * resolution * 2 * 3;
+        int numVerts = resolution * resolution;
+        int quadsPerDim = resolution - 1;
+        int numIndices = quadsPerDim * quadsPerDim * 6;
 
         var vertices = new NativeArray<Vertex>(numVerts, Allocator.Temp);
         var indices = new NativeArray<uint>(numIndices, Allocator.Temp); // (ushort)?
 
-        for (int y = 0; y < vertsPerDim; y++) {
-            for (int x = 0; x < vertsPerDim; x++) {
-                vertices[vertsPerDim * y + x] = new Vertex {
-                    position = new float3(x/(float)resolution, 0f, y/(float)resolution),
+        float step = 1.0f / (float)(resolution-1);
+
+        for (int z = 0; z < resolution; z++) {
+            for (int x = 0; x < resolution; x++) {
+                vertices[resolution * z + x] = new Vertex {
+                    position = new float3(x * step, 0f, z * step),
                     normal = new float3(0,1,0)
                 };
             }
         }
 
-        // CreateIndices(indices, resolution);
+        CreateIndices(indices, quadsPerDim);
 
-        int index = 0;
-        int halfRes = resolution/2;
+        // int index = 0;
+        // int halfRes = resolution/2;
 
-        CreateIndicesForQuadrant(indices, vertsPerDim, ref index, 0, halfRes, 0, halfRes);
-        _indexEndTl = index;
+        // CreateIndicesForQuadrant(indices, quadsPerDim, ref index, 0, halfRes, 0, halfRes);
+        // _indexEndTl = index;
 
-        CreateIndicesForQuadrant(indices, vertsPerDim, ref index, 0, halfRes, halfRes, resolution);
-        _indexEndTr = index;
+        // CreateIndicesForQuadrant(indices, quadsPerDim, ref index, 0, halfRes, halfRes, resolution);
+        // _indexEndTr = index;
 
-        CreateIndicesForQuadrant(indices, vertsPerDim, ref index, halfRes, resolution, 0, halfRes);
-        _indexEndBl = index;
+        // CreateIndicesForQuadrant(indices, quadsPerDim, ref index, halfRes, resolution, 0, halfRes);
+        // _indexEndBl = index;
 
-        CreateIndicesForQuadrant(indices, vertsPerDim, ref index, halfRes, resolution, halfRes, resolution);
-        _indexEndBr = index;
+        // CreateIndicesForQuadrant(indices, quadsPerDim, ref index, halfRes, resolution, halfRes, resolution);
+        // _indexEndBr = index;
 
         _mesh = new Mesh();
         _mesh.hideFlags = HideFlags.DontSave;
@@ -123,10 +125,10 @@ public class TerrainTile : MonoBehaviour {
         // var updateFlags = MeshUpdateFlags.DontValidateIndices; // Saves on compute
         
         _mesh.SetIndexBufferParams(numIndices, IndexFormat.UInt32);
-        _mesh.SetIndexBufferData(indices, 0, 0, numIndices);
-        _mesh.SetVertexBufferData(vertices, 0, 0, numVerts);
+        _mesh.SetIndexBufferData(indices, 0, 0, numIndices, updateFlags);
+        _mesh.SetVertexBufferData(vertices, 0, 0, numVerts, 0, updateFlags);
 
-        _mesh.SetSubMesh(0, new SubMeshDescriptor(0, numIndices));
+        _mesh.SetSubMesh(0, new SubMeshDescriptor(0, numIndices, MeshTopology.Triangles));
 
         /*
         Todo: Since we know the data we're rendering, don't leave Unity to
@@ -138,9 +140,25 @@ public class TerrainTile : MonoBehaviour {
     }
 
     // We create the tile as 4 quadrants, for easy deactivation later.
-    private static void CreateIndicesForQuadrant(NativeArray<uint> triangles, int vertsPerDim, ref int index, int yStart, int yEnd, int xStart, int xEnd) {
-        for (int y = yStart; y < yEnd; y++) {
-            for (int x = xStart; x < xEnd; x++) {
+    // private static void CreateIndicesForQuadrant(NativeArray<uint> triangles, int quadsPerDim, ref int index, int yStart, int yEnd, int xStart, int xEnd) {
+    //     for (int y = yStart; y < yEnd-1; y++) {
+    //         for (int x = xStart; x < xEnd-1; x++) {
+    //             triangles[index++] = (uint)((x + 0) + quadsPerDim * (y + 1));
+    //             triangles[index++] = (uint)((x + 1) + quadsPerDim * (y + 0));
+    //             triangles[index++] = (uint)((x + 0) + quadsPerDim * (y + 0));
+
+    //             triangles[index++] = (uint)((x + 0) + quadsPerDim * (y + 1));
+    //             triangles[index++] = (uint)((x + 1) + quadsPerDim * (y + 1));
+    //             triangles[index++] = (uint)((x + 1) + quadsPerDim * (y + 0));
+    //         }
+    //     }
+    // }
+
+    private static void CreateIndices(NativeArray<uint> triangles, int quadsPerDim) {
+        int vertsPerDim = quadsPerDim + 1;
+        int index = 0;
+        for (int y = 0; y < quadsPerDim; y++) {
+            for (int x = 0; x < quadsPerDim; x++) {
                 triangles[index++] = (uint)((x + 0) + vertsPerDim * (y + 1));
                 triangles[index++] = (uint)((x + 1) + vertsPerDim * (y + 0));
                 triangles[index++] = (uint)((x + 0) + vertsPerDim * (y + 0));
@@ -151,20 +169,4 @@ public class TerrainTile : MonoBehaviour {
             }
         }
     }
-
-    // private static void CreateIndices(NativeArray<uint> triangles, int resolution) {
-    //     int vertsPerDim = resolution + 1;
-    //     int index = 0;
-    //     for (int y = 0; y < resolution; y++) {
-    //         for (int x = 0; x < resolution; x++) {
-    //             triangles[index++] = (uint)((x + 0) + vertsPerDim * (y + 1));
-    //             triangles[index++] = (uint)((x + 1) + vertsPerDim * (y + 0));
-    //             triangles[index++] = (uint)((x + 0) + vertsPerDim * (y + 0));
-
-    //             triangles[index++] = (uint)((x + 0) + vertsPerDim * (y + 1));
-    //             triangles[index++] = (uint)((x + 1) + vertsPerDim * (y + 1));
-    //             triangles[index++] = (uint)((x + 1) + vertsPerDim * (y + 0));
-    //         }
-    //     }
-    // }
 }

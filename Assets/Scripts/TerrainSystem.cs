@@ -186,7 +186,7 @@ public class TerrainSystem : MonoBehaviour {
      * - Allocate height and color arrays at startup too?
      */
     private void Load(IList<IList<QTNode>> toLoad) {
-        int numVerts = _tileResolution + 1;
+        int numVerts = _tileResolution;
         Color32[] heights = new Color32[numVerts * numVerts];
         Color[] normals = new Color[numVerts * numVerts];
 
@@ -245,23 +245,23 @@ public class TerrainSystem : MonoBehaviour {
 	    return tile;
 	}
 
-    private static void GenerateTileHeights(Color32[] heights, Color[] normals, int numVerts, IHeightSampler sampler, Vector3 position, float scale) {
+    private static void GenerateTileHeights(Color32[] heights, Color[] normals, int resolution, IHeightSampler sampler, Vector3 position, float scale) {
         /*
          Todo: These sampling step sizes are off somehow, at least for normals
          I'm guessing it's my silly use of non-power-of-two textures, so let's
          fix that off-by-one thing everywhere.
          */
-        float stepSize = scale / (float)(numVerts-1);
-        float stepSizeNormals = scale / (float)(numVerts);
+        float stepSize = scale / (float)(resolution-1);
+        float stepSizeNormals = scale / (float)(resolution-1);
 
         /* Todo: can optimize normal generation by first sampling all heights, then using those to generate normals.
          * Only need procedural samples at edges. */
 
         float delta = 0.01f * scale;
 
-        for (int z = 0; z < numVerts; z++) {
-            for (int x = 0; x < numVerts; x++) {
-                int index = z * numVerts + x;
+        for (int z = 0; z < resolution; z++) {
+            for (int x = 0; x < resolution; x++) {
+                int index = z * resolution + x;
 
                 float xPos = position.x + x * stepSize;
                 float zPos = position.z + z * stepSize;

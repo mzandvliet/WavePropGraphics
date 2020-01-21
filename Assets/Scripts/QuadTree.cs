@@ -154,19 +154,18 @@ public class QTNode {
 
     /// <summary>
     /// Estimates node bounding box by taking scattered heightfield samples.
+    /// It's a pretty silly way to handle this, but it works for testing
     /// </summary>
     private void FitHeightSamples(IHeightSampler sampler) {
-        /* Todo: move this logic out of this class, too much business going on */
-
-        const int samplingResolution = 8;
+        const int resolution = 8;
 
         float highest = float.MinValue;
         float lowest = float.MaxValue;
 
-        float stepSize = Size.x/(samplingResolution-1);
+        float stepSize = Size.x/(resolution-1);
 
-        for (int x = 0; x < samplingResolution; x++) {
-            for (int z = 0; z < samplingResolution; z++) {
+        for (int x = 0; x < resolution; x++) {
+            for (int z = 0; z < resolution; z++) {
                 float posX = _position.x + x * stepSize;
                 float posZ = _position.z + z * stepSize;
                 float height = sampler.Sample(posX, posZ) * sampler.HeightScale;
