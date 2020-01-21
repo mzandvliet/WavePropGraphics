@@ -78,7 +78,7 @@ Shader "Custom/Terrain/TerrainTile" {
 
 			half3 UnpackNormalCustom(float4 c) {
 				half3 n = (c.xyz * 2.0) - float3(1,1,1);
-				n.z = 1 - n.x - n.y;
+				n.z = sqrt(1 - n.x * n.x - n.y * n.y);
 				return normalize(n);
 			}
 
