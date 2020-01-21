@@ -123,10 +123,10 @@ public class TerrainTile : MonoBehaviour {
         // var updateFlags = MeshUpdateFlags.DontValidateIndices; // Saves on compute
         
         _mesh.SetIndexBufferParams(numIndices, IndexFormat.UInt32);
-        _mesh.SetIndexBufferData(indices, 0, 0, numIndices);
-        _mesh.SetVertexBufferData(vertices, 0, 0, numVerts);
+        _mesh.SetIndexBufferData(indices, 0, 0, numIndices, updateFlags);
+        _mesh.SetVertexBufferData(vertices, 0, 0, numVerts, 0, updateFlags);
 
-        _mesh.SetSubMesh(0, new SubMeshDescriptor(0, numIndices));
+        _mesh.SetSubMesh(0, new SubMeshDescriptor(0, numIndices), updateFlags);
 
         /*
         Todo: Since we know the data we're rendering, don't leave Unity to

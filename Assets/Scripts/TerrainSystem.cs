@@ -1,38 +1,62 @@
 ﻿using System.Collections.Generic;
+using Unity.Collections;
+using Unity.Collections.LowLevel.Unsafe;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Profiling;
 
 /*
- * Make a pool of X^2 resolution vert meshes
- * Walk quadtree tree each frame to find the payloads that should be streamed/generated
- *      LOD level is based on 3D distance to the camera
- * Get a mesh from the pool and stream data into it
- * 
- * Todo:
- * 
- * Use TextureStreaming API? Texture2D.requestedMipmapLevel?
- https://docs.unity3d.com/Manual/TextureStreaming-API.html
- *
- * Improve normal map popping
- *
- * Octaved height texture update from interactive wave simulation
- * 
- * Burstify all the things
- * Rewrite Quadtree logic. Flat, data-driven, burst-friendly
- * 
- * Single mesh prototype, use material property blocks to assign textures and transforms
- * Shadow pass
- * 
- * Increase distance, draw and detail scales
- *
- * Track accurate tile bounding box information for LOD selection
- *
- * - Figure out how to disable the 4 quadrants of a tile without cpu overhead
- * 
- * - Separate culling passes to find visual and shadow caster tiles, use pass tags to render them differently
- *      - https://gist.github.com/pigeon6/4237385
- */
+Make a pool of X^2 resolution vert meshes
+Walk quadtree tree each frame to find the payloads that should be streamed/generated
+    LOD level is based on 3D distance to the camera
+Get a mesh from the pool and stream data into it
+
+Todo:
+
+Improve normal map popping
+
+Octaved height texture update from interactive wave simulation
+
+Burstify all the things
+Rewrite Quadtree logic. Flat, data-driven, burst-friendly
+
+Maybe use compute buffers to send heigh data to GPU? We're not using
+hardware-interpolators for reading the height textures at the moment,
+since we're using text2dlod, and bilinearly sampling in software
+
+Single mesh prototype, use material property blocks to assign textures and transforms
+Shadow pass
+
+Increase distance, draw and detail scales
+
+Track accurate tile bounding box information for LOD selection
+
+Figure out how to disable the 4 quadrants of a tile without cpu overhead
+
+Separate culling passes to find visual and shadow caster tiles, use pass tags to render them differently
+    - https://gist.github.com/pigeon6/4237385
+
+
+Use TextureStreaming API? Texture2D.requestedMipmapLevel?
+https://docs.unity3d.com/Manual/TextureStreaming-API.html
+
+New Texture2D api features to try:
+- LoadRawTextureData(NativeArra<T> data), https://docs.unity3d.com/ScriptReference/Texture2D.LoadRawTextureData.html
+- GetRawTextureData(), returns a reference which is even better, https://docs.unity3d.com/ScriptReference/Texture2D.GetRawTextureData.html
+- Compress(), compresses into DXT1, or DXT5 if alpha channel
+
+*/
+
+public struct byte2 {
+    public byte x;
+    public byte y;
+
+    public byte2(byte x, byte y) {
+        this.x = x;
+        this.y = y;
+    }
+}
+
 public class TerrainSystem : MonoBehaviour {
     [SerializeField] private Material _material;
     [SerializeField] private Camera _camera;
@@ -42,7 +66,7 @@ public class TerrainSystem : MonoBehaviour {
     [SerializeField] private float _lodZeroRange = 32f;
     [SerializeField] private float _heightScale = 512f;
 
-    private float[] _lodDistances;
+    private NativeArray<float> _lodDistances;
 
     private Stack<TerrainTile> _meshPool;
     private IDictionary<QTNode, TerrainTile> _activeMeshes;
@@ -55,7 +79,8 @@ public class TerrainSystem : MonoBehaviour {
     private IHeightSampler _heightSampler;
 
     void Awake() {
-        _lodDistances = QuadTree.GetLodDistances(_numLods, _lodZeroRange);
+        _lodDistances = new NativeArray<float>(_numLods, Allocator.Persistent);
+        QuadTree.GenerateLodDistances(_lodDistances, _lodZeroRange);
 
         for (int i = 0; i < _lodDistances.Length; i++) {
             Debug.LogFormat("LOD_{0} Dist: {1}", i, _lodDistances[i]);
@@ -70,6 +95,10 @@ public class TerrainSystem : MonoBehaviour {
 
         CreatePooledTiles();
         _activeMeshes = new Dictionary<QTNode, TerrainTile>();
+    }
+
+    private void OnDestroy() {
+        _lodDistances.Dispose();
     }
 
     private static IList<IList<QTNode>> CreateList(int length) {
@@ -99,44 +128,42 @@ public class TerrainSystem : MonoBehaviour {
     }
 
     /*
-     * -- Configuration --
-     * 
-     * Make easier-to-use parameters. Like, at max lod I want 1px/m resolution.
-     * 
-     * -- Architecture --
-     * 
-     * We are receiving a new list of quadtree nodes each time, which we need to compare with the old list.
-     * 
-     * Testing equality of nodes is iffy. Nodes are reference types in one sense, but then value types later.
-     * Also, if nodes have more data to them it makes more sense to keep them as reference type. Caching and
-     * reusing a single tree instead of generating an immutable tree each frame and diffing.
-     * 
-     * We could mark nodes on a persistent tree structure dirty if some action is need. Update this dirty state
-     * when validating the tree each frame, and creating jobs frome there.
-     * 
-     * We currently use three collections to manage node and mesh instances. It's unwieldy.
-     * 
-     * Decouple visrep and simrep streaming. Allow multiple perspectives. Allow simrep streaming without a perspective.
-     * 
-     * 
-     * 
-     * -- Performance --
-     * 
-     * Creating a class QTNode-based tree each frame means heap-related garbage. Creating a recursive struct QTNode
-     * is impossible because a struct can not have members of its own type.
-     * 
-     * We could pool QTNodes
-     * 
-     * We could use a single mesh instance on the GPU, but we still need separate mesh instances on the cpu for tiles
-     * we want colliders on, which is every lod > x
-     * 
-     * -- Bugs --
-     * 
-     * We need accurate bounding boxes that encapsulate height data for each node during quad-tree traversal, otherwise
-     * the intersection test (and hence the lod selection) will be inaccurate.
-     * 
-     * Shadows are broken. Sometimes something shows up, but it's completely wrong.
-     */
+    -- Configuration --
+    
+    Make easier-to-use parameters. Like, at max lod I want 1px/m resolution.
+    
+    -- Architecture --
+    
+    We are receiving a new list of quadtree nodes each time, which we need to compare with the old list.
+    
+    Testing equality of nodes is iffy. Nodes are reference types in one sense, but then value types later.
+    Also, if nodes have more data to them it makes more sense to keep them as reference type. Caching and
+    reusing a single tree instead of generating an immutable tree each frame and diffing.
+    
+    We could mark nodes on a persistent tree structure dirty if some action is need. Update this dirty state
+    when validating the tree each frame, and creating jobs frome there.
+    
+    We currently use three collections to manage node and mesh instances. It's unwieldy.
+    
+    Decouple visrep and simrep streaming. Allow multiple perspectives. Allow simrep streaming without a perspective.
+    
+    -- Performance --
+    
+    Creating a class QTNode-based tree each frame means heap-related garbage. Creating a recursive struct QTNode
+    is impossible because a struct can not have members of its own type.
+    
+    We could pool QTNodes
+    
+    We could use a single mesh instance on the GPU, but we still need separate mesh instances on the cpu for tiles
+    we want colliders on, which is every lod > x
+    
+    -- Bugs --
+    
+    We need accurate bounding boxes that encapsulate height data for each node during quad-tree traversal, otherwise
+    the intersection test (and hence the lod selection) will be inaccurate.
+    
+    Shadows are broken. Sometimes something shows up, but it's completely wrong.
+    */
 
     private void Update() {
         var camInfo = CameraInfo.Create(_camera);
@@ -166,6 +193,8 @@ public class TerrainSystem : MonoBehaviour {
         Profiler.BeginSample("Load");
         Load(_toLoad);
         Profiler.EndSample();
+
+        camInfo.Dispose();
     }
 
     private void Unload(IList<IList<QTNode>> toUnload) {
@@ -187,8 +216,6 @@ public class TerrainSystem : MonoBehaviour {
      */
     private void Load(IList<IList<QTNode>> toLoad) {
         int numVerts = _tileResolution + 1;
-        Color32[] heights = new Color32[numVerts * numVerts];
-        Color[] normals = new Color[numVerts * numVerts];
 
         for (int i = 0; i < toLoad.Count; i++) {
             var lodNodes = toLoad[i];
@@ -208,20 +235,24 @@ public class TerrainSystem : MonoBehaviour {
                 mesh.MeshRenderer.material.SetFloat("_HeightScale", _heightScale);
                 mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
 
+                var heightMap = new Texture2D(numVerts, numVerts, TextureFormat.RG16, false, true);
+                var normalMap = new Texture2D(numVerts, numVerts, TextureFormat.RGFloat, true, true); // Todo: use RGHalf?
+
+                var heights = heightMap.GetRawTextureData<byte2>();
+                var normals = normalMap.GetRawTextureData<float2>();
+
                 GenerateTileHeights(heights, normals, numVerts, _heightSampler, position, node.Size.x);
+                heightMap.Apply(false);
+                normalMap.Apply(true);
+                
+                heightMap.wrapMode = TextureWrapMode.Clamp;
+                normalMap.wrapMode = TextureWrapMode.Clamp;
+                heightMap.filterMode = FilterMode.Point;
+                normalMap.filterMode = FilterMode.Trilinear;
+                normalMap.anisoLevel = 4;
 
-                var heightmap = new Texture2D(numVerts, numVerts, TextureFormat.RGBA32, false, true); // Note: BA channels go unused right now, get creative!
-                var normalmap = new Texture2D(numVerts, numVerts, TextureFormat.RGFloat, true, true);
-                heightmap.wrapMode = TextureWrapMode.Clamp;
-                normalmap.wrapMode = TextureWrapMode.Clamp;
-                heightmap.filterMode = FilterMode.Point;
-                normalmap.filterMode = FilterMode.Trilinear;
-                normalmap.anisoLevel = 4;
-
-                ToTexture(heights, heightmap);
-                ToTexture(normals, normalmap);
-                mesh.MeshRenderer.material.SetTexture("_HeightTex", heightmap);
-                mesh.MeshRenderer.material.SetTexture("_NormalTex", normalmap);
+                mesh.MeshRenderer.material.SetTexture("_HeightTex", heightMap);
+                mesh.MeshRenderer.material.SetTexture("_NormalTex", normalMap);
 
                 mesh.Mesh.bounds = new Bounds(Vector3.zero, node.Size);
 
@@ -245,7 +276,7 @@ public class TerrainSystem : MonoBehaviour {
 	    return tile;
 	}
 
-    private static void GenerateTileHeights(Color32[] heights, Color[] normals, int numVerts, IHeightSampler sampler, Vector3 position, float scale) {
+    private static void GenerateTileHeights(NativeSlice<byte2> heights, NativeSlice<float2> normals, int numVerts, IHeightSampler sampler, Vector3 position, float scale) {
         /*
          Todo: These sampling step sizes are off somehow, at least for normals
          I'm guessing it's my silly use of non-power-of-two textures, so let's
@@ -268,10 +299,10 @@ public class TerrainSystem : MonoBehaviour {
 
                 float height = sampler.Sample(xPos, zPos);
                 
-                heights[index] = new Color32(
+                heights[index] = new byte2(
                     (byte)(Mathf.RoundToInt(height * 65535f) >> 8),
-                    (byte)(Mathf.RoundToInt(height * 65535f)),
-                    0,0);
+                    (byte)(Mathf.RoundToInt(height * 65535f))
+                );
 
                 xPos = position.x + x * stepSizeNormals;
                 zPos = position.z + z * stepSizeNormals;
@@ -284,31 +315,20 @@ public class TerrainSystem : MonoBehaviour {
                 Vector3 lr = new Vector3(delta * 2f, (heightR - heightL) * sampler.HeightScale, 0f);
                 Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, delta * 2f);
                 Vector3 normal = Vector3.Cross(bt, lr).normalized;
-                
-                normals[index] = new Color(
+
+                // Note: normal z-component is recalculated on the gpu, which saves transfer memory
+                normals[index] = new float2(
                     0.5f + normal.x * 0.5f,
-                    0.5f + normal.y * 0.5f,
-                    0.5f + normal.z * 0.5f,
-                    1f);
+                    0.5f + normal.y * 0.5f);
             }
         }
-    }
-
-    private static void ToTexture(Color[] heights, Texture2D texture) {
-        texture.SetPixels(heights);
-        texture.Apply(true);
-    }
-
-    private static void ToTexture(Color32[] heights, Texture2D texture) {
-        texture.SetPixels32(heights);
-        texture.Apply(false);
     }
 
     private void OnDrawGizmos() {
         var camInfo = CameraInfo.Create(_camera);
 
         if (_heightSampler == null) {
-            _lodDistances = QuadTree.GetLodDistances(_numLods, _lodZeroRange);
+            QuadTree.GenerateLodDistances(_lodDistances, _lodZeroRange);
             _heightSampler = new FractalHeightSampler(_heightScale);
             _visibleNodes = CreateList(_numLods);
         }
@@ -320,8 +340,10 @@ public class TerrainSystem : MonoBehaviour {
         QuadTree.DrawSelectedNodes(_visibleNodes);
 
         Gizmos.color = Color.magenta;
-        Gizmos.DrawRay(camInfo.Position, Vector3.up * 1000f);
-        Gizmos.DrawSphere(camInfo.Position, 1f);
+        Gizmos.DrawRay(camInfo.position, Vector3.up * 1000f);
+        Gizmos.DrawSphere(camInfo.position, 1f);
+
+        camInfo.Dispose();
     }
 }
 

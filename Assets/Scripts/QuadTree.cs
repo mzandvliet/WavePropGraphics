@@ -1,6 +1,8 @@
 ﻿using UnityEngine;
 using System.Collections.Generic;
 using Unity.Mathematics;
+using Unity.Collections;
+using System.Runtime.CompilerServices;
 
 /*
  * Quad tree expansion based on the procedural data is easily the most dodgy aspect of this toy project
@@ -17,16 +19,14 @@ using Unity.Mathematics;
  */
 
 public static class QuadTree {
-   public static float[] GetLodDistances(int numLods, float lodZeroRange) {
+   public static void GenerateLodDistances(NativeArray<float> lods, float lodZeroRange) {
         // Todo: this would be a lot easier to read if lod level indices were in reversed order
-        float[] distances = new float[numLods];
+        int numLods = lods.Length;
 
-        distances[numLods - 1] = lodZeroRange;
+        lods[numLods - 1] = lodZeroRange;
         for (int i = numLods - 2; i >= 0; i--) {
-            distances[i] = distances[i + 1] * 2f;
+            lods[i] = lods[i + 1] * 2f;
         }
-
-        return distances;
     }
 
     // Todo: partial child expansion (needs parent mesh partial vertex enable/disable)
@@ -35,7 +35,7 @@ public static class QuadTree {
         int currentLod,
         QTNode node,
         CameraInfo cam,
-        float[] lodDistances,
+        NativeSlice<float> lodDistances,
         IList<IList<QTNode>> selectedNodes,
         IHeightSampler sampler) {
 
@@ -60,7 +60,7 @@ public static class QuadTree {
     }
 
     private static bool Intersect(QTNode node, CameraInfo camInfo, float range) {
-        return IntersectBoxSphere(node.Position, node.Position + node.Size, camInfo.Position, range);
+        return IntersectBoxSphere(node.Position, node.Position + node.Size, camInfo.position, range);
     }
 
     private static bool IntersectBoxSphere(Vector3 bMin, Vector3 bMax, Vector3 spherePos, float sphereRadius) {
@@ -73,6 +73,7 @@ public static class QuadTree {
         return minDist <= sqrRadius;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float Sqr(float val) {
         return val*val;
     }
@@ -184,13 +185,6 @@ public class QTNode {
         _size.y = (highest - lowest) * 1.05f; // Add in a tiny margin for error caused by subsampling
     }
 
-    /*
-     * Todo: decide whether QTNode is a reference or value type. This is just weird.
-     * 
-     * It will be a reference type, as payloads are becoming non-trivial, and we want to
-     * minimize garbage.
-     */
-
     public bool FastEquals(QTNode other) {
         return Position == other.Position && Size == other.Size;
     }
@@ -216,17 +210,5 @@ public class QTNode {
         unchecked {
             return (_position.GetHashCode()*397) ^ _size.GetHashCode();
         }
-    }
-}
-
-public struct CameraInfo {
-    public Vector3 Position;
-    public Plane[] FrustumPlanes;
-
-    public static CameraInfo Create(Camera camera) {
-        return new CameraInfo() {
-            Position = camera.transform.position,
-            FrustumPlanes = GeometryUtility.CalculateFrustumPlanes(camera)
-        };
     }
 }
