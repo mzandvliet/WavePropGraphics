@@ -46,4 +46,9 @@ public struct NativeStack<T> : IDisposable where T : struct {
         T item = _items[_current];
         return item;
     }
+
+    public T this[int i] {
+        get => _items[i];
+        // set => _items[i] = value;
+    }
 }

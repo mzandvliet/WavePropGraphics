@@ -30,6 +30,13 @@ public static class Morton {
         return SeparateBy1(x) | (SeparateBy1(y) << 1);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static int Code2dTree(int x, int y, int d) {
+        int depthOffset = 0; // todo: calculate as sum-of-powers-of-4
+        return depthOffset + Code2d(x, y);
+    }
+
+
     // Trick for offsetting Morton coded address in a 2d spatial grid
 
     private const int XMask = 0b01010101010101010101010101010101;

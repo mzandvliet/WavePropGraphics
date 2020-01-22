@@ -91,7 +91,7 @@ public class TerrainSystem : MonoBehaviour {
         _toLoad = CreateList(_numLods);
         _toUnload = CreateList(_numLods);
 
-        _heightSampler = new FractalHeightSampler(_heightScale);
+        _heightSampler = new HeightSampler(_heightScale);
 
         CreatePooledTiles();
         _activeMeshes = new Dictionary<QTNode, TerrainTile>();
@@ -240,21 +240,20 @@ public class TerrainSystem : MonoBehaviour {
 
                 var heights = heightMap.GetRawTextureData<byte2>();
                 var normals = normalMap.GetRawTextureData<float2>();
-
-                GenerateTileHeights(heights, normals, numVerts, _heightSampler, position, node.Size.x);
-                heightMap.Apply(false);
-                normalMap.Apply(true);
-                
                 heightMap.wrapMode = TextureWrapMode.Clamp;
                 normalMap.wrapMode = TextureWrapMode.Clamp;
                 heightMap.filterMode = FilterMode.Point;
                 normalMap.filterMode = FilterMode.Trilinear;
                 normalMap.anisoLevel = 4;
 
+                GenerateTileHeights(heights, normals, numVerts, _heightSampler, position, node.Size.x);
+                heightMap.Apply(false);
+                normalMap.Apply(true);
+
                 mesh.MeshRenderer.material.SetTexture("_HeightTex", heightMap);
                 mesh.MeshRenderer.material.SetTexture("_NormalTex", normalMap);
 
-                mesh.Mesh.bounds = new Bounds(Vector3.zero, node.Size);
+                mesh.Mesh.bounds = new UnityEngine.Bounds(Vector3.zero, node.Size);
 
                 mesh.gameObject.name = "Terrain_LOD_" + i;
                 mesh.gameObject.SetActive(true);
@@ -329,7 +328,7 @@ public class TerrainSystem : MonoBehaviour {
 
         if (_heightSampler == null) {
             QuadTree.GenerateLodDistances(_lodDistances, _lodZeroRange);
-            _heightSampler = new FractalHeightSampler(_heightScale);
+            _heightSampler = new HeightSampler(_heightScale);
             _visibleNodes = CreateList(_numLods);
         }
 
@@ -352,14 +351,14 @@ public interface IHeightSampler {
     float Sample(float x, float z);
 }
 
-public class FractalHeightSampler : IHeightSampler {
+public struct HeightSampler : IHeightSampler {
     private float _heightScale;
 
     public float HeightScale {
         get { return _heightScale; }
     }
 
-    public FractalHeightSampler(float heightScale) {
+    public HeightSampler(float heightScale) {
         _heightScale = heightScale;
     }
 
@@ -373,9 +372,7 @@ public class FractalHeightSampler : IHeightSampler {
                 (0.5f + Mathf.Cos(-1.1192f * ((i+1) *17) + (z * Mathf.PI) * 0.001317f * (i+1)) * 0.5f) *
                 (0.5f / (float)(1+i*2));
         }
-       
 
         return h;
-           
     }
 }
