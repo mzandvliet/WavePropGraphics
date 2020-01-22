@@ -1,6 +1,7 @@
 ﻿using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
+using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Profiling;
@@ -69,14 +70,15 @@ public class TerrainSystem : MonoBehaviour {
     private NativeArray<float> _lodDistances;
 
     private Stack<TerrainTile> _meshPool;
-    private IDictionary<QTNode, TerrainTile> _activeMeshes;
+    private IDictionary<Bounds, TerrainTile> _activeMeshes;
 
-    private IList<IList<QTNode>> _visibleNodes;
-    private IList<IList<QTNode>> _toLoad;
-    private IList<IList<QTNode>> _toUnload;
-    private IList<IList<QTNode>> _loadedNodes;
+    private Tree _visibleNodes;
+    private NativeList<int> _toLoad; // indexes into _visibleNodes
 
-    private IHeightSampler _heightSampler;
+    private Tree _loadedNodes;
+    private NativeList<int> _toUnload; // indexes into _loadedNodes
+
+    private HeightSampler _heightSampler;
 
     void Awake() {
         _lodDistances = new NativeArray<float>(_numLods, Allocator.Persistent);
@@ -86,33 +88,29 @@ public class TerrainSystem : MonoBehaviour {
             Debug.LogFormat("LOD_{0} Dist: {1}", i, _lodDistances[i]);
         }
 
-        _visibleNodes = CreateList(_numLods);
-        _loadedNodes = CreateList(_numLods);
-        _toLoad = CreateList(_numLods);
-        _toUnload = CreateList(_numLods);
-
         _heightSampler = new HeightSampler(_heightScale);
 
+        int maxNodes = mathi.SumPowersOfFour(_numLods);
+
+        var bMin = new float3(-_lodZeroScale * 0.5f, 0f, -_lodZeroScale * 0.5f);
+        var lodZeroScale = new float3(_lodZeroScale, _heightScale, _lodZeroScale);
+
+        _visibleNodes = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
+        _loadedNodes =  new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
+        _toLoad = new NativeList<int>(maxNodes, Allocator.Persistent);
+        _toUnload = new NativeList<int>(maxNodes, Allocator.Persistent);
+
         CreatePooledTiles();
-        _activeMeshes = new Dictionary<QTNode, TerrainTile>();
+        _activeMeshes = new Dictionary<Bounds, TerrainTile>();
     }
 
     private void OnDestroy() {
         _lodDistances.Dispose();
-    }
 
-    private static IList<IList<QTNode>> CreateList(int length) {
-        var list = new List<IList<QTNode>>(length);
-        for (int i = 0; i < length; i++) {
-            list.Add(new List<QTNode>());
-        }
-        return list;
-    }
-
-    private static void ClearList(IList<IList<QTNode>> list) {
-        for (int i = 0; i < list.Count; i++) {
-            list[i].Clear();
-        }
+        _visibleNodes.Dispose();
+        _loadedNodes.Dispose();
+        _toLoad.Dispose();
+        _toUnload.Dispose();
     }
 
     private void CreatePooledTiles() {
@@ -165,48 +163,66 @@ public class TerrainSystem : MonoBehaviour {
     Shadows are broken. Sometimes something shows up, but it's completely wrong.
     */
 
+    private JobHandle _lodJobHandle;
+    private CameraInfo _camInfo; // Todo: make fully stack-based using fixed array struct
+
     private void Update() {
-        var camInfo = CameraInfo.Create(_camera);
+        _camInfo = CameraInfo.Create(_camera, Allocator.Persistent);
 
         var bMin = new Vector3(-_lodZeroScale * 0.5f, 0f, -_lodZeroScale * 0.5f);
         var lodZeroScale = new Vector3(_lodZeroScale, _heightScale, _lodZeroScale);
 
-        Profiler.BeginSample("Clear");
-        ClearList(_visibleNodes);
-        ClearList(_toLoad);
-        ClearList(_toUnload);
-        Profiler.EndSample();
+        _visibleNodes.Clear(new Bounds(bMin, lodZeroScale));
+        _toLoad.Clear();
+        _toUnload.Clear();
 
-        Profiler.BeginSample("ExpandNodesToList");
-        QTNode root = new QTNode(bMin, lodZeroScale);
-        QuadTree.ExpandNodeRecursively(0, root, camInfo, _lodDistances, _visibleNodes, _heightSampler);
-        Profiler.EndSample();
+        var expandTreeJob = new ExpandQuadTreeJob() {
+            camInfo = _camInfo,
+            lodDistances = _lodDistances,
+            tree = _visibleNodes
+        };
+        var expandHandle = expandTreeJob.Schedule();
 
-        Profiler.BeginSample("Diffs");
-        QuadTree.Diff(_visibleNodes, _loadedNodes, _toUnload);
-        QuadTree.Diff(_loadedNodes, _visibleNodes, _toLoad);
-        Profiler.EndSample();
+        var unloadDiffJob = new DiffQuadTreesJob() {
+            a = _visibleNodes,
+            b = _loadedNodes,
+            diff = _toUnload,
+        };
+        var loadDiffJob = new DiffQuadTreesJob()
+        {
+            a = _loadedNodes,
+            b = _visibleNodes,
+            diff = _toLoad
+        };
 
-        Profiler.BeginSample("Unload");
-        Unload(_toUnload);
-        Profiler.EndSample();
-        Profiler.BeginSample("Load");
-        Load(_toLoad);
-        Profiler.EndSample();
-
-        camInfo.Dispose();
+        _lodJobHandle = JobHandle.CombineDependencies(
+            unloadDiffJob.Schedule(expandHandle),
+            loadDiffJob.Schedule(expandHandle)
+        );
     }
 
-    private void Unload(IList<IList<QTNode>> toUnload) {
-        for (int i = 0; i < toUnload.Count; i++) {
-            for (int j = 0; j < toUnload[i].Count; j++) {
-                var node = toUnload[i][j];
-                var mesh = _activeMeshes[node];
-                _meshPool.Push(mesh);
-                _loadedNodes[i].Remove(node);
-                _activeMeshes.Remove(node);
-                mesh.gameObject.SetActive(false);
-            }
+    private void LateUpdate() {
+        _lodJobHandle.Complete();
+
+        Profiler.BeginSample("Unload");
+        Unload(_loadedNodes, _toUnload);
+        Profiler.EndSample();
+        Profiler.BeginSample("Load");
+        Load(_visibleNodes, _toLoad);
+        Profiler.EndSample();
+
+        // We blindly assume all loads and unloads succeed
+
+        _camInfo.Dispose();
+    }
+
+    private void Unload(Tree tree, NativeList<int> toUnload) {
+        for (int i = 0; i < toUnload.Length; i++) {
+            var node = tree[toUnload[i]];
+            var mesh = _activeMeshes[node.bounds];
+            _meshPool.Push(mesh);
+            _activeMeshes.Remove(node.bounds);
+            mesh.gameObject.SetActive(false);
         }
     }
 
@@ -214,52 +230,47 @@ public class TerrainSystem : MonoBehaviour {
      * - Store textures with their tiles, allocate at startup
      * - Allocate height and color arrays at startup too?
      */
-    private void Load(IList<IList<QTNode>> toLoad) {
+    private void Load(Tree tree, NativeList<int> toLoad) {
         int numVerts = _tileResolution + 1;
 
-        for (int i = 0; i < toLoad.Count; i++) {
-            var lodNodes = toLoad[i];
+        for (int i = 0; i < toLoad.Length; i++) {
+            var node = tree[toLoad[i]];
             const float lMin = 3f, lMax = 3.5f;
-            var lerpRanges = new Vector4(_lodDistances[i] * lMin, _lodDistances[i] * lMax); // math.max(0,i-1)
+            var lerpRanges = new Vector4(_lodDistances[node.depth] * lMin, _lodDistances[node.depth] * lMax);
 
-            for (int j = 0; j < lodNodes.Count; j++) {
-                var node = lodNodes[j];
-                var mesh = _meshPool.Pop(); // Should be a TilePool, where Tile = { Transform, MatPropBlock, Tex2d, Tex2d }
-                _activeMeshes.Add(node, mesh);
+            var mesh = _meshPool.Pop(); // Should be a TilePool, where Tile = { Transform, MatPropBlock, Tex2d, Tex2d }
+            _activeMeshes.Add(node.bounds, mesh);
 
-                Vector3 position = new Vector3(node.Center.x - node.Size.x * 0.5f, 0f, node.Center.z - node.Size.z * 0.5f);
+            float3 position = new float3(node.bounds.position.x, 0f, node.bounds.position.z);
 
-                mesh.Transform.position = position;
-                mesh.Transform.localScale = node.Size;
-                mesh.MeshRenderer.material.SetFloat("_Scale", node.Size.x);
-                mesh.MeshRenderer.material.SetFloat("_HeightScale", _heightScale);
-                mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
+            mesh.Transform.position = position;
+            mesh.Transform.localScale = node.bounds.size;
+            mesh.MeshRenderer.material.SetFloat("_Scale", node.bounds.size.x);
+            mesh.MeshRenderer.material.SetFloat("_HeightScale", _heightScale);
+            mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
 
-                var heightMap = new Texture2D(numVerts, numVerts, TextureFormat.RG16, false, true);
-                var normalMap = new Texture2D(numVerts, numVerts, TextureFormat.RGFloat, true, true); // Todo: use RGHalf?
+            var heightMap = new Texture2D(numVerts, numVerts, TextureFormat.RG16, false, true);
+            var normalMap = new Texture2D(numVerts, numVerts, TextureFormat.RGFloat, true, true); // Todo: use RGHalf?
 
-                var heights = heightMap.GetRawTextureData<byte2>();
-                var normals = normalMap.GetRawTextureData<float2>();
-                heightMap.wrapMode = TextureWrapMode.Clamp;
-                normalMap.wrapMode = TextureWrapMode.Clamp;
-                heightMap.filterMode = FilterMode.Point;
-                normalMap.filterMode = FilterMode.Trilinear;
-                normalMap.anisoLevel = 4;
+            var heights = heightMap.GetRawTextureData<byte2>();
+            var normals = normalMap.GetRawTextureData<float2>();
+            heightMap.wrapMode = TextureWrapMode.Clamp;
+            normalMap.wrapMode = TextureWrapMode.Clamp;
+            heightMap.filterMode = FilterMode.Point;
+            normalMap.filterMode = FilterMode.Trilinear;
+            normalMap.anisoLevel = 4;
 
-                GenerateTileHeights(heights, normals, numVerts, _heightSampler, position, node.Size.x);
-                heightMap.Apply(false);
-                normalMap.Apply(true);
+            GenerateTileHeights(heights, normals, numVerts, _heightSampler, position, node.bounds.size.x);
+            heightMap.Apply(false);
+            normalMap.Apply(true);
 
-                mesh.MeshRenderer.material.SetTexture("_HeightTex", heightMap);
-                mesh.MeshRenderer.material.SetTexture("_NormalTex", normalMap);
+            mesh.MeshRenderer.material.SetTexture("_HeightTex", heightMap);
+            mesh.MeshRenderer.material.SetTexture("_NormalTex", normalMap);
 
-                mesh.Mesh.bounds = new UnityEngine.Bounds(Vector3.zero, node.Size);
+            mesh.Mesh.bounds = new UnityEngine.Bounds(Vector3.zero, node.bounds.size);
 
-                mesh.gameObject.name = "Terrain_LOD_" + i;
-                mesh.gameObject.SetActive(true);
-
-                _loadedNodes[i].Add(node);
-            }
+            mesh.gameObject.name = "Terrain_LOD_" + i;
+            mesh.gameObject.SetActive(true);
         }
     }
 
@@ -324,25 +335,23 @@ public class TerrainSystem : MonoBehaviour {
     }
 
     private void OnDrawGizmos() {
-        var camInfo = CameraInfo.Create(_camera);
-
-        if (_heightSampler == null) {
-            QuadTree.GenerateLodDistances(_lodDistances, _lodZeroRange);
-            _heightSampler = new HeightSampler(_heightScale);
-            _visibleNodes = CreateList(_numLods);
+        if (!Application.isPlaying) {
+            return;
         }
 
-        var bMin = new Vector3(-_lodZeroScale*0.5f, 0f, -_lodZeroScale*0.5f);
-        var lodZeroScale = new Vector3(_lodZeroScale, _heightScale, _lodZeroScale);
-        QTNode root = new QTNode(bMin, lodZeroScale);
-        QuadTree.ExpandNodeRecursively(0, root, camInfo, _lodDistances, _visibleNodes, _heightSampler);
-        QuadTree.DrawSelectedNodes(_visibleNodes);
+        // var camInfo = CameraInfo.Create(_camera);
 
-        Gizmos.color = Color.magenta;
-        Gizmos.DrawRay(camInfo.position, Vector3.up * 1000f);
-        Gizmos.DrawSphere(camInfo.position, 1f);
+        // var bMin = new Vector3(-_lodZeroScale*0.5f, 0f, -_lodZeroScale*0.5f);
+        // var lodZeroScale = new Vector3(_lodZeroScale, _heightScale, _lodZeroScale);
+        // QTNode root = new QTNode(bMin, lodZeroScale);
+        // QuadTree.ExpandNodeRecursively(0, root, camInfo, _lodDistances, _visibleNodes, _heightSampler);
+        // QuadTree.DrawSelectedNodes(_visibleNodes);
 
-        camInfo.Dispose();
+        // Gizmos.color = Color.magenta;
+        // Gizmos.DrawRay(camInfo.position, Vector3.up * 1000f);
+        // Gizmos.DrawSphere(camInfo.position, 1f);
+
+        // camInfo.Dispose();
     }
 }
 

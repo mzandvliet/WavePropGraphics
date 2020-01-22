@@ -8,17 +8,13 @@ using Unity.Burst;
 
 [BurstCompile]
 public struct ExpandQuadTreeJob : IJob {
-    [ReadOnly] public int maxDepth;
     [ReadOnly] public CameraInfo camInfo;
     [ReadOnly] public NativeSlice<float> lodDistances;
-    [ReadOnly] public HeightSampler heights;
 
-    [ReadOnly] public Bounds root;
     public Tree tree;
 
     public void Execute() {
-        var stack = new NativeStack<int>(mathi.SumPowersOfTwo(maxDepth), Allocator.TempJob);
-
+        var stack = new NativeStack<int>(mathi.SumPowersOfFour(tree.MaxLevels), Allocator.Temp);
         stack.Push(0);
 
         while (stack.Count > 0) {
@@ -27,7 +23,7 @@ public struct ExpandQuadTreeJob : IJob {
             var parent = tree[parentIdx];
 
             // If we're at the deepest lod level, no need to expand further
-            if (parent.depth == maxDepth - 1) {
+            if (parent.depth == tree.MaxLevels - 1) {
                 parent.payload = 1;
                 tree[parentIdx] = parent;
                 continue;
@@ -55,21 +51,16 @@ public struct ExpandQuadTreeJob : IJob {
 
 [BurstCompile]
 public struct DiffQuadTreesJob : IJob {
-    [ReadOnly] public NativeArray<int> a;
-    [ReadOnly] public NativeArray<int> b;
+    [ReadOnly] public Tree a;
+    [ReadOnly] public Tree b;
 
     public NativeList<int> diff;
 
     public void Execute() {
         diff.Clear();
 
-        if (a.Length != b.Length) {
-            Debug.LogError("Cannot diff two quadtrees of different capacities");
-            return;
-        }
-
-        for (int i = 0; i < a.Length; i++) {
-            if (b[i] != a[i]) {
+        for (int i = 0; i < a.Count; i++) {
+            if (!b.Contains(a[i].bounds)) {
                 diff.Add(i);
             }
         }
@@ -95,6 +86,10 @@ public static class TreeUtil {
     public static float Sqr(float val) {
         return val * val;
     }
+
+    public static int GetMortonTreeIndex(int depth, int x, int y) {
+        return mathi.SumPowersOfFour(depth-1) + Morton.Code2d(x, y);
+    }
 }
 
 // Todo: z-order curve addressing structure will simplify all of this structure
@@ -102,15 +97,34 @@ public struct Tree : System.IDisposable {
     private NativeList<TreeNode> _nodes;
     private HeightSampler _heights;
 
+    public int MaxLevels {
+        get;
+        private set;
+    }
+
+    public int Count {
+        get => _nodes.Length;
+    }
+
     public Tree(Bounds bounds, int maxLevels, HeightSampler heights, Allocator allocator) {
         _nodes = new NativeList<TreeNode>(mathi.SumPowersOfFour(maxLevels), allocator);
+        MaxLevels = maxLevels;
         _heights = heights;
         NewNode(bounds, 0);
     }
 
+    public void Clear(Bounds bounds) {
+        _nodes.Clear();
+        NewNode(bounds, 0);
+    }
+
+    public void Dispose() {
+        _nodes.Dispose();
+    }
+
     private int NewNode(Bounds bounds, int depth) {
         int idx = _nodes.Length;
-        var node = new TreeNode(bounds, 0);
+        var node = new TreeNode(bounds, depth);
         _nodes.Add(node);
         return idx;
     }
@@ -171,8 +185,13 @@ public struct Tree : System.IDisposable {
         set => _nodes[i] = value;
     }
 
-    public void Dispose() {
-        _nodes.Dispose();
+    public bool Contains(Bounds bounds) {
+        for (int i = 0; i < _nodes.Length; i++) {
+            if (_nodes[i].bounds.Equals(bounds)) {
+                return true;
+            }
+        }
+        return false;
     }
 }
 
@@ -228,6 +247,10 @@ public struct Bounds {
     public Bounds(float3 position, float3 size) {
         this.position = position;
         this.size = size;
+    }
+
+    public bool Equals(Bounds other) {
+        return position.Equals(other.position) && size.Equals(other.size);
     }
 }
 

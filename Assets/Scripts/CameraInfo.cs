@@ -10,10 +10,10 @@ public struct CameraInfo : System.IDisposable {
 
     private static Plane[] PlaneCache = new Plane[6];
 
-    public static CameraInfo Create(Camera camera) {
+    public static CameraInfo Create(Camera camera, Allocator allocator) {
         GeometryUtility.CalculateFrustumPlanes(camera, PlaneCache);
 
-        var planes = new NativeArray<Plane>(6, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+        var planes = new NativeArray<Plane>(6, allocator, NativeArrayOptions.UninitializedMemory);
         planes.CopyFrom(PlaneCache);
 
         return new CameraInfo() {
