@@ -184,14 +184,14 @@ public class TerrainSystem : MonoBehaviour {
         var expandHandle = expandTreeJob.Schedule();
 
         var unloadDiffJob = new DiffQuadTreesJob() {
-            a = _visibleNodes,
-            b = _loadedNodes,
+            a = _loadedNodes,
+            b = _visibleNodes,
             diff = _toUnload,
         };
         var loadDiffJob = new DiffQuadTreesJob()
         {
-            a = _loadedNodes,
-            b = _visibleNodes,
+            a = _visibleNodes,
+            b = _loadedNodes,
             diff = _toLoad
         };
 
@@ -212,8 +212,15 @@ public class TerrainSystem : MonoBehaviour {
         Profiler.EndSample();
 
         // We blindly assume all loads and unloads succeed
+        Swap();
 
         _camInfo.Dispose();
+    }
+
+    private void Swap() {
+        var temp = _loadedNodes;
+        _loadedNodes = _visibleNodes;
+        _visibleNodes = temp;
     }
 
     private void Unload(Tree tree, NativeList<int> toUnload) {

@@ -18,31 +18,32 @@ public struct ExpandQuadTreeJob : IJob {
         stack.Push(0);
 
         while (stack.Count > 0) {
-            int depth = stack.Count - 1;
-            int parentIdx = stack.Pop();
-            var parent = tree[parentIdx];
+            int nodeIdx = stack.Pop();
+            var node = tree[nodeIdx];
+            int depth = node.depth;
 
             // If we're at the deepest lod level, no need to expand further
-            if (parent.depth == tree.MaxLevels - 1) {
-                parent.payload = 1;
-                tree[parentIdx] = parent;
+            if (node.depth == tree.MaxLevels - 1) {
+                node.payload = 1;
+                tree[nodeIdx] = node;
                 continue;
             }
 
             // If not, we should create children if we're in LOD range
-            if (TreeUtil.Intersect(parent.bounds, camInfo, lodDistances[depth])) {
-                tree.Expand(parentIdx);
+            if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[depth])) {
+                node = tree.Expand(nodeIdx);
+                tree[nodeIdx] = node;
 
                 for (int i = 0; i < 4; i++) {
-                    stack.Push(parent[i]);
+                    stack.Push(node[i]);
                 }
 
                 continue;
             }
 
             // If we don't need to expand, just add to the list
-            parent.payload = 1;
-            tree[parentIdx] = parent;
+            node.payload = 1;
+            tree[nodeIdx] = node;
         }
 
         stack.Dispose();
@@ -129,24 +130,28 @@ public struct Tree : System.IDisposable {
         return idx;
     }
 
-    public void Expand(int idx) {
-        var parent = _nodes[idx];
-        var halfSize = parent.bounds.size * 0.5f;
+    public TreeNode Expand(int idx) {
+        var node = _nodes[idx];
+        var halfSize = node.bounds.size * 0.5f;
 
-        var bl = new Bounds(parent.bounds.position + new float3(0f, 0f, 0f), halfSize);
-        var tl = new Bounds(parent.bounds.position + new float3(0f, 0f, halfSize.z), halfSize);
-        var tr = new Bounds(parent.bounds.position + new float3(halfSize.x, 0f, halfSize.z), halfSize);
-        var br = new Bounds(parent.bounds.position + new float3(halfSize.x, 0f, 0f), halfSize);
+        var bl = new Bounds(node.bounds.position + new float3(0f, 0f, 0f), halfSize);
+        var tl = new Bounds(node.bounds.position + new float3(0f, 0f, halfSize.z), halfSize);
+        var tr = new Bounds(node.bounds.position + new float3(halfSize.x, 0f, halfSize.z), halfSize);
+        var br = new Bounds(node.bounds.position + new float3(halfSize.x, 0f, 0f), halfSize);
 
         bl = FitHeightSamples(bl, _heights);
         tl = FitHeightSamples(tl, _heights);
         tr = FitHeightSamples(tr, _heights);
         br = FitHeightSamples(br, _heights);
 
-        parent.bl = NewNode(bl, parent.depth + 1);
-        parent.tl = NewNode(tl, parent.depth + 1);
-        parent.tr = NewNode(tr, parent.depth + 1);
-        parent.br = NewNode(br, parent.depth + 1);
+        node[0] = NewNode(bl, node.depth + 1);
+        node[1] = NewNode(tl, node.depth + 1);
+        node[2] = NewNode(tr, node.depth + 1);
+        node[3] = NewNode(br, node.depth + 1);
+
+        _nodes[idx] = node;
+
+        return node; // Convenience, since caller's old copy of Node data will be invalidated
     }
 
     private static Bounds FitHeightSamples(Bounds bounds, HeightSampler sampler) {
@@ -180,6 +185,8 @@ public struct Tree : System.IDisposable {
         return bounds;
     }
 
+    /* Important: this returns by copy, not by reference. Don't forget to
+    explicitly write back new values if you change them! */
     public TreeNode this[int i] {
         get => _nodes[i];
         set => _nodes[i] = value;
@@ -200,22 +207,29 @@ Todo:
 if we use Morton indexing there is no need for much of this structure
 */
 [StructLayout(LayoutKind.Sequential)]
-public struct TreeNode {
+public unsafe struct TreeNode {
     public int payload;
 
     public Bounds bounds;
     public int depth;
     
-    public int bl;
-    public int br;
-    public int tl;
-    public int tr;
+    // public int bl;
+    // public int br;
+    // public int tl;
+    // public int tr;
+
+    private fixed int children[4];
 
     public TreeNode(Bounds bounds, int depth) {
         this.bounds = bounds;
         this.depth = depth;
         payload = -1;
-        bl = br = tl = tr = -1;
+
+        fixed(int* p = children) {
+            for (int i = 0; i < 4; i++) {
+                p[i] = -1;
+            }
+        }
     }
 
     public unsafe int this[int idx] {
@@ -224,17 +238,13 @@ public struct TreeNode {
         //  https://docs.microsoft.com/en-us/dotnet/csharp/programming-guide/unsafe-code-pointers/fixed-size-buffers
 
         get {
-            fixed (int* p = &bl) {
-                int* p2 = p;
-                p2 += idx;
-                return *p2;
+            fixed (int* p = children) {
+                return p[idx];
             }
         }
         set {
-            fixed (int* p = &bl) {
-                int* p2 = p;
-                p2 += idx;
-                *p2 = value;
+            fixed (int* p = children) {
+                p[idx] = value;
             }
         }
     }
@@ -250,7 +260,7 @@ public struct Bounds {
     }
 
     public bool Equals(Bounds other) {
-        return position.Equals(other.position) && size.Equals(other.size);
+        return ((int3)position).Equals((int3)other.position) && ((int3)size).Equals((int3)other.size);
     }
 }
 
@@ -275,5 +285,9 @@ public static class mathi {
             pow >>= 1;
         }
         return v;
+    }
+
+    public static ref int RefReturnTest(int[] values, int i) {
+        return ref values[i];
     }
 }
