@@ -131,17 +131,17 @@ Shader "Custom/Terrain/TerrainTile" {
 
 			half4 frag(v2f i) : COLOR {
 				half3 L = normalize(_WorldSpaceLightPos0.xyz);
-				// half3 worldNormal = UnpackNormalCustom(tex2D(_NormalTex, i.uv2));
+				half3 worldNormal = UnpackNormalCustom(tex2D(_NormalTex, i.uv2));
 
-				const float heightScale = 512.0; // Todo: parameterize
-				const float2 step = float2(0.0,0.05);
-				float heightL = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(i.uv2 - step.yx,0,0)));
-                float heightR = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(i.uv2 + step.yx,0,0)));
-                float heightB = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(i.uv2 - step.xy,0,0)));
-                float heightT = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(i.uv2 + step.xy,0,0)));
-				float3 lr = float3(step.y *  _Scale * 2.0, (heightR - heightL) * heightScale, 0.0);
-                float3 bt = float3(0.0, (heightT - heightB) * heightScale, step.y * _Scale * 2.0);
-                float3 worldNormal = normalize(cross(bt, lr));
+				// const float heightScale = 512.0; // Todo: parameterize
+				// const float2 step = float2(0.0,0.05);
+				// float heightL = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(i.uv2 - step.yx,0,0)));
+                // float heightR = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(i.uv2 + step.yx,0,0)));
+                // float heightB = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(i.uv2 - step.xy,0,0)));
+                // float heightT = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(i.uv2 + step.xy,0,0)));
+				// float3 lr = float3(step.y *  _Scale * 2.0, (heightR - heightL) * heightScale, 0.0);
+                // float3 bt = float3(0.0, (heightT - heightB) * heightScale, step.y * _Scale * 2.0);
+                // float3 worldNormal = normalize(cross(bt, lr));
 
 				half attenuation = LIGHT_ATTENUATION(i) * 2;
 				

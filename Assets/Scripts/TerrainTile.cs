@@ -1,11 +1,12 @@
 ﻿using UnityEngine;
 using UnityEngine.Rendering;
 using Unity.Collections;
-using Unity.Jobs;
 using Unity.Mathematics;
 
 /*
-Todo: create mesh once, reuse for all tiles
+Todo: 
+- create mesh once, reuse for all tiles
+- use material property blocks to manage per-tile data
 */
 
 public struct Vertex {
@@ -18,6 +19,8 @@ public class TerrainTile : MonoBehaviour {
     private Mesh _mesh;
     private MeshFilter _meshFilter;
     private MeshRenderer _meshRenderer;
+    private Texture2D _heightMap;
+    private Texture2D _normalMap;
 
     private int _resolution;
     private int _indexEndTl;
@@ -39,6 +42,14 @@ public class TerrainTile : MonoBehaviour {
 
     public MeshRenderer MeshRenderer {
         get { return _meshRenderer; }
+    }
+
+    public Texture2D HeightMap {
+        get => _heightMap;
+    }
+
+    public Texture2D NormalMap {
+        get => _normalMap;
     }
 
     public int Resolution {
@@ -74,7 +85,18 @@ public class TerrainTile : MonoBehaviour {
         _meshRenderer = gameObject.AddComponent<MeshRenderer>();
         
         CreateMesh(resolution);
-    }
+
+        _heightMap = new Texture2D(resolution + 1, resolution + 1, TextureFormat.RG16, false, true);
+        _normalMap = new Texture2D(resolution + 1, resolution + 1, TextureFormat.RGFloat, true, true); // Todo: use RGHalf?
+        _heightMap.wrapMode = TextureWrapMode.Clamp;
+        _normalMap.wrapMode = TextureWrapMode.Clamp;
+        _heightMap.filterMode = FilterMode.Point;
+        _normalMap.filterMode = FilterMode.Trilinear;
+        _normalMap.anisoLevel = 4;
+
+        _meshRenderer.material.SetTexture("_HeightTex", _heightMap);
+        _meshRenderer.material.SetTexture("_NormalTex", _normalMap);
+}
 
     private void CreateMesh(int resolution) {
         int vertsPerDim = (resolution + 1);

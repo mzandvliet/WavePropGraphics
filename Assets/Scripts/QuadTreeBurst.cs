@@ -20,30 +20,27 @@ public struct ExpandQuadTreeJob : IJob {
         while (stack.Count > 0) {
             int nodeIdx = stack.Pop();
             var node = tree[nodeIdx];
-            int depth = node.depth;
 
             // If we're at the deepest lod level, no need to expand further
             if (node.depth == tree.MaxLevels - 1) {
                 node.payload = 1;
                 tree[nodeIdx] = node;
-                continue;
-            }
-
+            } else
             // If not, we should create children if we're in LOD range
-            if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[depth])) {
+            if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[node.depth])) {
                 node = tree.Expand(nodeIdx);
+                node.payload = -1;
                 tree[nodeIdx] = node;
 
                 for (int i = 0; i < 4; i++) {
                     stack.Push(node[i]);
                 }
 
-                continue;
+            } else {
+                // If we don't need to expand, just add to the list
+                node.payload = 1;
+                tree[nodeIdx] = node;
             }
-
-            // If we don't need to expand, just add to the list
-            node.payload = 1;
-            tree[nodeIdx] = node;
         }
 
         stack.Dispose();
@@ -61,7 +58,7 @@ public struct DiffQuadTreesJob : IJob {
         diff.Clear();
 
         for (int i = 0; i < a.Count; i++) {
-            if (a[i].payload != 0 && !b.Contains(a[i].bounds)) {
+            if (a[i].payload > -1 && !b.Contains(a[i].bounds)) {
                 diff.Add(i);
             }
         }
@@ -157,10 +154,10 @@ public struct Tree : System.IDisposable {
     private static Bounds FitHeightSamples(Bounds bounds, HeightSampler sampler) {
         /* Todo: move this logic out of this class, too much business going on */
 
-        const int samplingResolution = 8;
+        int lowest = bounds.position.y;
+        int highest = bounds.position.y + bounds.size.y;
 
-        int highest = int.MinValue;
-        int lowest = int.MaxValue;
+        const int samplingResolution = 4;
 
         float stepSize = bounds.size.x / (samplingResolution - 1);
 
@@ -256,14 +253,18 @@ public struct Bounds {
     public override bool Equals(System.Object obj) {
         return obj is Bounds && this == (Bounds)obj;
     }
+
     public override int GetHashCode() {
-        return position.GetHashCode() ^ size.GetHashCode();
+        return position.GetHashCode() ^ size.x.GetHashCode();
     }
-    public static bool operator ==(Bounds x, Bounds y) {
-        return x.GetHashCode() == y.GetHashCode();
+    
+    public static bool operator ==(Bounds a, Bounds b) {
+        return 
+            a.position.x == b.position.x && a.position.z == b.position.z &&
+            a.size.x == b.size.x;
     }
-    public static bool operator !=(Bounds x, Bounds y) {
-        return !(x == y);
+    public static bool operator !=(Bounds a, Bounds b) {
+        return !(a == b);
     }
 
     public override string ToString() {

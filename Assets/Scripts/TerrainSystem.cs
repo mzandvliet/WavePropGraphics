@@ -69,7 +69,7 @@ public class TerrainSystem : MonoBehaviour {
 
     private NativeArray<float> _lodDistances;
 
-    private Stack<TerrainTile> _meshPool;
+    private Stack<TerrainTile> _tilePool;
     private IDictionary<Bounds, TerrainTile> _activeMeshes;
 
     private Tree _visibleNodes;
@@ -114,14 +114,14 @@ public class TerrainSystem : MonoBehaviour {
     }
 
     private void CreatePooledTiles() {
-        const int numTiles = 360; // Todo: how many do we really need at max?
+        const int numTiles = 256; // Todo: how many do we really need at max?
 
-        _meshPool = new Stack<TerrainTile>();
+        _tilePool = new Stack<TerrainTile>();
         for (int i = 0; i < numTiles; i++) {
             var tile = CreateTile("tile_"+i, _tileResolution, _material);
             tile.Transform.parent = transform;
             tile.gameObject.SetActive(false);
-            _meshPool.Push(tile);
+            _tilePool.Push(tile);
         }
     }
 
@@ -233,7 +233,7 @@ public class TerrainSystem : MonoBehaviour {
             }
 
             var mesh = _activeMeshes[node.bounds];
-            _meshPool.Push(mesh);
+            _tilePool.Push(mesh);
             _activeMeshes.Remove(node.bounds);
             mesh.gameObject.SetActive(false);
         }
@@ -252,48 +252,38 @@ public class TerrainSystem : MonoBehaviour {
             const float lMin = 3f, lMax = 3.5f;
             var lerpRanges = new Vector4(_lodDistances[node.depth] * lMin, _lodDistances[node.depth] * lMax);
 
-            var mesh = _meshPool.Pop(); // Should be a TilePool, where Tile = { Transform, MatPropBlock, Tex2d, Tex2d }
+            var mesh = _tilePool.Pop();
             _activeMeshes.Add(node.bounds, mesh);
 
             float3 position = new float3(node.bounds.position.x, 0f, node.bounds.position.z);
-
             mesh.Transform.position = position;
-            mesh.Transform.localScale = (float3)node.bounds.size;
+            mesh.Transform.localScale = new float3(node.bounds.size.x, 1f, node.bounds.size.z);
             mesh.MeshRenderer.material.SetFloat("_Scale", node.bounds.size.x);
             mesh.MeshRenderer.material.SetFloat("_HeightScale", _heightScale);
             mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
 
-            var heightMap = new Texture2D(numVerts, numVerts, TextureFormat.RG16, false, true);
-            var normalMap = new Texture2D(numVerts, numVerts, TextureFormat.RGFloat, true, true); // Todo: use RGHalf?
-
-            var heights = heightMap.GetRawTextureData<byte2>();
-            var normals = normalMap.GetRawTextureData<float2>();
-            heightMap.wrapMode = TextureWrapMode.Clamp;
-            normalMap.wrapMode = TextureWrapMode.Clamp;
-            heightMap.filterMode = FilterMode.Point;
-            normalMap.filterMode = FilterMode.Trilinear;
-            normalMap.anisoLevel = 4;
-
+            var heights = mesh.HeightMap.GetRawTextureData<byte2>();
+            var normals = mesh.NormalMap.GetRawTextureData<float2>();
             GenerateTileHeights(heights, normals, numVerts, _heightSampler, position, node.bounds.size.x);
-            heightMap.Apply(false);
-            normalMap.Apply(true);
+            mesh.HeightMap.Apply(false);
+            mesh.NormalMap.Apply(true);
 
-            mesh.MeshRenderer.material.SetTexture("_HeightTex", heightMap);
-            mesh.MeshRenderer.material.SetTexture("_NormalTex", normalMap);
+            mesh.MeshRenderer.material.SetTexture("_HeightTex", mesh.HeightMap);
+            mesh.MeshRenderer.material.SetTexture("_NormalTex", mesh.NormalMap);
 
             mesh.Mesh.bounds = new UnityEngine.Bounds(Vector3.zero, (float3)node.bounds.size);
 
-            mesh.gameObject.name = "Terrain_LOD_" + i;
+            mesh.gameObject.name = string.Format("Terrain_D{0}_", node.depth, node.bounds.position.x, node.bounds.position.z);
             mesh.gameObject.SetActive(true);
         }
     }
 
     private static TerrainTile CreateTile(string name, int resolution, Material material) {
         var tileObject = new GameObject(name);
+        tileObject.transform.position = Vector3.zero;
         var tile = tileObject.AddComponent<TerrainTile>();
         tile.Create(resolution);
 	    tile.MeshRenderer.material = material;
-
         tile.MeshRenderer.material.SetFloat("_Scale", 16f);
         tile.MeshRenderer.material.SetVector("_LerpRanges", new Vector4(1f, 16f));
 
@@ -316,14 +306,14 @@ public class TerrainSystem : MonoBehaviour {
 
         for (int z = 0; z < numVerts; z++) {
             for (int x = 0; x < numVerts; x++) {
-                int index = z * numVerts + x;
+                int idx = z * numVerts + x;
 
                 float xPos = position.x + x * stepSize;
                 float zPos = position.z + z * stepSize;
 
                 float height = sampler.Sample(xPos, zPos);
                 
-                heights[index] = new byte2(
+                heights[idx] = new byte2(
                     (byte)(Mathf.RoundToInt(height * 65535f) >> 8),
                     (byte)(Mathf.RoundToInt(height * 65535f))
                 );
@@ -341,7 +331,7 @@ public class TerrainSystem : MonoBehaviour {
                 Vector3 normal = Vector3.Cross(bt, lr).normalized;
 
                 // Note: normal z-component is recalculated on the gpu, which saves transfer memory
-                normals[index] = new float2(
+                normals[idx] = new float2(
                     0.5f + normal.x * 0.5f,
                     0.5f + normal.y * 0.5f);
             }
