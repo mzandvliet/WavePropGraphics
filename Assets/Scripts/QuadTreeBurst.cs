@@ -61,7 +61,7 @@ public struct DiffQuadTreesJob : IJob {
         diff.Clear();
 
         for (int i = 0; i < a.Count; i++) {
-            if (!b.Contains(a[i].bounds)) {
+            if (a[i].payload != 0 && !b.Contains(a[i].bounds)) {
                 diff.Add(i);
             }
         }
@@ -132,12 +132,12 @@ public struct Tree : System.IDisposable {
 
     public TreeNode Expand(int idx) {
         var node = _nodes[idx];
-        var halfSize = node.bounds.size * 0.5f;
+        var halfSize = node.bounds.size / 2;
 
-        var bl = new Bounds(node.bounds.position + new float3(0f, 0f, 0f), halfSize);
-        var tl = new Bounds(node.bounds.position + new float3(0f, 0f, halfSize.z), halfSize);
-        var tr = new Bounds(node.bounds.position + new float3(halfSize.x, 0f, halfSize.z), halfSize);
-        var br = new Bounds(node.bounds.position + new float3(halfSize.x, 0f, 0f), halfSize);
+        var bl = new Bounds(node.bounds.position + new int3(0, 0, 0), halfSize);
+        var tl = new Bounds(node.bounds.position + new int3(0, 0, halfSize.z), halfSize);
+        var tr = new Bounds(node.bounds.position + new int3(halfSize.x, 0, halfSize.z), halfSize);
+        var br = new Bounds(node.bounds.position + new int3(halfSize.x, 0, 0), halfSize);
 
         bl = FitHeightSamples(bl, _heights);
         tl = FitHeightSamples(tl, _heights);
@@ -159,8 +159,8 @@ public struct Tree : System.IDisposable {
 
         const int samplingResolution = 8;
 
-        float highest = float.MinValue;
-        float lowest = float.MaxValue;
+        int highest = int.MinValue;
+        int lowest = int.MaxValue;
 
         float stepSize = bounds.size.x / (samplingResolution - 1);
 
@@ -171,16 +171,16 @@ public struct Tree : System.IDisposable {
                 float height = sampler.Sample(posX, posZ) * sampler.HeightScale;
 
                 if (height > highest) {
-                    highest = height;
+                    highest = (int)height;
                 }
                 if (height < lowest) {
-                    lowest = height;
+                    lowest = (int)height;
                 }
             }
         }
 
         bounds.position.y = lowest;
-        bounds.size.y = (highest - lowest) * 1.05f; // Add in a tiny margin for error caused by subsampling
+        bounds.size.y = highest - lowest;
 
         return bounds;
     }
@@ -194,7 +194,7 @@ public struct Tree : System.IDisposable {
 
     public bool Contains(Bounds bounds) {
         for (int i = 0; i < _nodes.Length; i++) {
-            if (_nodes[i].bounds.Equals(bounds)) {
+            if (_nodes[i].bounds == bounds) {
                 return true;
             }
         }
@@ -213,11 +213,6 @@ public unsafe struct TreeNode {
     public Bounds bounds;
     public int depth;
     
-    // public int bl;
-    // public int br;
-    // public int tl;
-    // public int tr;
-
     private fixed int children[4];
 
     public TreeNode(Bounds bounds, int depth) {
@@ -234,8 +229,6 @@ public unsafe struct TreeNode {
 
     public unsafe int this[int idx] {
         // Index the 4 child indices as if they are an int[4] array
-        // Todo: try fixed-size buffers:
-        //  https://docs.microsoft.com/en-us/dotnet/csharp/programming-guide/unsafe-code-pointers/fixed-size-buffers
 
         get {
             fixed (int* p = children) {
@@ -251,16 +244,30 @@ public unsafe struct TreeNode {
 }
 
 public struct Bounds {
-    public float3 position;
-    public float3 size;
+    // These are in METERS
+    public int3 position;
+    public int3 size;
 
-    public Bounds(float3 position, float3 size) {
+    public Bounds(int3 position, int3 size) {
         this.position = position;
         this.size = size;
     }
 
-    public bool Equals(Bounds other) {
-        return ((int3)position).Equals((int3)other.position) && ((int3)size).Equals((int3)other.size);
+    public override bool Equals(System.Object obj) {
+        return obj is Bounds && this == (Bounds)obj;
+    }
+    public override int GetHashCode() {
+        return position.GetHashCode() ^ size.GetHashCode();
+    }
+    public static bool operator ==(Bounds x, Bounds y) {
+        return x.GetHashCode() == y.GetHashCode();
+    }
+    public static bool operator !=(Bounds x, Bounds y) {
+        return !(x == y);
+    }
+
+    public override string ToString() {
+        return string.Format("[Pos: {0}, Size: {1}]", position, size);
     }
 }
 

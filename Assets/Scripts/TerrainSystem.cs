@@ -61,11 +61,11 @@ public struct byte2 {
 public class TerrainSystem : MonoBehaviour {
     [SerializeField] private Material _material;
     [SerializeField] private Camera _camera;
-    [SerializeField] private float _lodZeroScale = 4096f;
+    [SerializeField] private int _lodZeroScale = 4096;
     [SerializeField] private int _tileResolution = 16;
     [SerializeField] private int _numLods = 10;
-    [SerializeField] private float _lodZeroRange = 32f;
-    [SerializeField] private float _heightScale = 512f;
+    [SerializeField] private int _lodZeroRange = 32;
+    [SerializeField] private int _heightScale = 512;
 
     private NativeArray<float> _lodDistances;
 
@@ -92,8 +92,8 @@ public class TerrainSystem : MonoBehaviour {
 
         int maxNodes = mathi.SumPowersOfFour(_numLods);
 
-        var bMin = new float3(-_lodZeroScale * 0.5f, 0f, -_lodZeroScale * 0.5f);
-        var lodZeroScale = new float3(_lodZeroScale, _heightScale, _lodZeroScale);
+        var bMin = new int3(-_lodZeroScale / 2, 0, -_lodZeroScale / 2);
+        var lodZeroScale = new int3(_lodZeroScale, _heightScale, _lodZeroScale);
 
         _visibleNodes = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
         _loadedNodes =  new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
@@ -169,8 +169,8 @@ public class TerrainSystem : MonoBehaviour {
     private void Update() {
         _camInfo = CameraInfo.Create(_camera, Allocator.Persistent);
 
-        var bMin = new Vector3(-_lodZeroScale * 0.5f, 0f, -_lodZeroScale * 0.5f);
-        var lodZeroScale = new Vector3(_lodZeroScale, _heightScale, _lodZeroScale);
+        var bMin = new int3(-_lodZeroScale / 2, 0, -_lodZeroScale / 2);
+        var lodZeroScale = new int3(_lodZeroScale, _heightScale, _lodZeroScale);
 
         _visibleNodes.Clear(new Bounds(bMin, lodZeroScale));
         _toLoad.Clear();
@@ -226,6 +226,12 @@ public class TerrainSystem : MonoBehaviour {
     private void Unload(Tree tree, NativeList<int> toUnload) {
         for (int i = 0; i < toUnload.Length; i++) {
             var node = tree[toUnload[i]];
+
+            if (!_activeMeshes.ContainsKey(node.bounds)) {
+                Debug.LogWarningFormat("Attempting to unload node with id {0} without active mesh assigned to it: {1}", toUnload[i], node.bounds);
+                continue;
+            }
+
             var mesh = _activeMeshes[node.bounds];
             _meshPool.Push(mesh);
             _activeMeshes.Remove(node.bounds);
@@ -242,6 +248,7 @@ public class TerrainSystem : MonoBehaviour {
 
         for (int i = 0; i < toLoad.Length; i++) {
             var node = tree[toLoad[i]];
+
             const float lMin = 3f, lMax = 3.5f;
             var lerpRanges = new Vector4(_lodDistances[node.depth] * lMin, _lodDistances[node.depth] * lMax);
 
@@ -251,7 +258,7 @@ public class TerrainSystem : MonoBehaviour {
             float3 position = new float3(node.bounds.position.x, 0f, node.bounds.position.z);
 
             mesh.Transform.position = position;
-            mesh.Transform.localScale = node.bounds.size;
+            mesh.Transform.localScale = (float3)node.bounds.size;
             mesh.MeshRenderer.material.SetFloat("_Scale", node.bounds.size.x);
             mesh.MeshRenderer.material.SetFloat("_HeightScale", _heightScale);
             mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
@@ -274,7 +281,7 @@ public class TerrainSystem : MonoBehaviour {
             mesh.MeshRenderer.material.SetTexture("_HeightTex", heightMap);
             mesh.MeshRenderer.material.SetTexture("_NormalTex", normalMap);
 
-            mesh.Mesh.bounds = new UnityEngine.Bounds(Vector3.zero, node.bounds.size);
+            mesh.Mesh.bounds = new UnityEngine.Bounds(Vector3.zero, (float3)node.bounds.size);
 
             mesh.gameObject.name = "Terrain_LOD_" + i;
             mesh.gameObject.SetActive(true);
