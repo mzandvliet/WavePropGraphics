@@ -245,9 +245,9 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   _material: {fileID: 2100000, guid: 5099a9500f3dcc84f86a47e7b30512ef, type: 2}
   _camera: {fileID: 1933210033}
-  _lodZeroScale: 4096
+  _lodZeroScale: 65536
   _tileResolution: 16
-  _numLods: 8
+  _numLods: 12
   _lodZeroRange: 32
   _heightScale: 512
 --- !u!4 &1424449847

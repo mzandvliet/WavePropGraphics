@@ -71,6 +71,7 @@ public class TerrainSystem : MonoBehaviour {
     private NativeArray<float> _lodDistances;
 
     private Stack<TerrainTile> _tilePool;
+    private int _totalTiles;
     private IDictionary<TreeNode, TerrainTile> _loadedTiles;
 
     private Tree _visibleTree;
@@ -98,7 +99,9 @@ public class TerrainSystem : MonoBehaviour {
 
         _loadedTiles = new Dictionary<TreeNode, TerrainTile>();
 
-        CreatePooledTiles();
+        _tilePool = new Stack<TerrainTile>();
+        const int numTiles = 256; // Todo: how many do we really need at max?
+        PreallocateTiles(numTiles);
     }
 
     private void OnDestroy() {
@@ -109,15 +112,9 @@ public class TerrainSystem : MonoBehaviour {
         _toUnload.Dispose();
     }
 
-    private void CreatePooledTiles() {
-        const int numTiles = 256; // Todo: how many do we really need at max?
-
-        _tilePool = new Stack<TerrainTile>();
-        for (int i = 0; i < numTiles; i++) {
-            var tile = CreateTile("tile_"+i, _tileResolution, _material);
-            tile.Transform.parent = transform;
-            tile.gameObject.SetActive(false);
-            _tilePool.Push(tile);
+    private void PreallocateTiles(int count) {
+        for (int i = 0; i < count; i++) {
+            AllocateNewTileInPool();
         }
     }
 
@@ -266,7 +263,7 @@ public class TerrainSystem : MonoBehaviour {
                 continue;
             }
 
-            Debug.Log(string.Format("Unloading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
+            // Debug.Log(string.Format("Unloading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
             var mesh = _loadedTiles[node];
             mesh.gameObject.SetActive(false);
@@ -286,7 +283,7 @@ public class TerrainSystem : MonoBehaviour {
         for (int i = 0; i < toLoad.Length; i++) {
             var node = toLoad[i];
 
-            Debug.Log(string.Format("Loading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
+            // Debug.Log(string.Format("Loading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
             const float lMin = 2.33f, lMax = 2.66f;
             var lerpRanges = new Vector4(_lodDistances[node.depth] * lMin, _lodDistances[node.depth] * lMax);
@@ -294,6 +291,11 @@ public class TerrainSystem : MonoBehaviour {
             if (_loadedTiles.ContainsKey(node)) {
                 Debug.LogWarningFormat("Attempting to load tile that's already in use! {0}", node);
                 continue;
+            }
+
+            if (_tilePool.Count < 1) {
+                Debug.LogWarningFormat("Dynamically allocating new tile to accomodate demand. Total tiles: {0}", _totalTiles);
+                AllocateNewTileInPool();
             }
 
             var mesh = _tilePool.Pop();
@@ -322,7 +324,14 @@ public class TerrainSystem : MonoBehaviour {
         }
     }
 
-    private static TerrainTile CreateTile(string name, int resolution, Material material) {
+    private void AllocateNewTileInPool() {
+        var tile = CreateTileObject("tile_" + _totalTiles++, _tileResolution, _material);
+        tile.Transform.parent = transform;
+        tile.gameObject.SetActive(false);
+        _tilePool.Push(tile);
+    }
+
+    private static TerrainTile CreateTileObject(string name, int resolution, Material material) {
         var tileObject = new GameObject(name);
         var tile = tileObject.AddComponent<TerrainTile>();
         tile.Create(resolution);
