@@ -1,5 +1,5 @@
 ﻿using System.Collections.Generic;
-using System.Linq;
+using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
@@ -70,9 +70,9 @@ public class TerrainSystem : MonoBehaviour {
 
     private NativeArray<float> _lodDistances;
 
-    private Stack<TerrainTile> _tilePool;
-    private int _totalTiles;
-    private IDictionary<TreeNode, TerrainTile> _loadedTiles;
+    private List<TerrainTile> _tiles;
+    private NativeStack<int> _tileIndexPool;
+    private NativeHashMap<TreeNode, int> _tileMap;
 
     private Tree _visibleTree;
     private NativeList<TreeNode> _visibleSet;
@@ -97,9 +97,10 @@ public class TerrainSystem : MonoBehaviour {
         _toLoad = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
         _toUnload = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
 
-        _loadedTiles = new Dictionary<TreeNode, TerrainTile>();
+        _tiles = new List<TerrainTile>();
+        _tileIndexPool = new NativeStack<int>(maxNodes, Allocator.Persistent);
+        _tileMap = new NativeHashMap<TreeNode, int>(maxNodes, Allocator.Persistent);
 
-        _tilePool = new Stack<TerrainTile>();
         const int numTiles = 256; // Todo: how many do we really need at max?
         PreallocateTiles(numTiles);
     }
@@ -108,8 +109,12 @@ public class TerrainSystem : MonoBehaviour {
         _lodDistances.Dispose();
 
         _visibleTree.Dispose();
+        _visibleSet.Dispose();
         _toLoad.Dispose();
         _toUnload.Dispose();
+
+        _tileMap.Dispose();
+        _tileIndexPool.Dispose();
     }
 
     private void PreallocateTiles(int count) {
@@ -134,30 +139,19 @@ public class TerrainSystem : MonoBehaviour {
     We could mark nodes on a persistent tree structure dirty if some action is need. Update this dirty state
     when validating the tree each frame, and creating jobs frome there.
     
-    We currently use three collections to manage node and mesh instances. It's unwieldy.
+    We currently use three collections to manage node and mesh instances. It's a bit unwieldy.
     
     Decouple visrep and simrep streaming. Allow multiple perspectives. Allow simrep streaming without a perspective.
     
     -- Performance --
     
-    Creating a class QTNode-based tree each frame means heap-related garbage. Creating a recursive struct QTNode
-    is impossible because a struct can not have members of its own type.
-    
-    We could pool QTNodes
-    
     We could use a single mesh instance on the GPU, but we still need separate mesh instances on the cpu for tiles
     we want colliders on, which is every lod > x
     
-    -- Bugs --
-    
-    We need accurate bounding boxes that encapsulate height data for each node during quad-tree traversal, otherwise
-    the intersection test (and hence the lod selection) will be inaccurate.
-    
-    Shadows are broken. Sometimes something shows up, but it's completely wrong.
     */
 
     private JobHandle _lodJobHandle;
-    private CameraInfo _camInfo; // Todo: make fully stack-based using fixed array struct
+    private CameraInfo _camInfo;
 
     private void Update() {
         /*
@@ -204,7 +198,14 @@ public class TerrainSystem : MonoBehaviour {
         _toLoad.Clear();
         _toUnload.Clear();
 
-        var loadedKeys = _loadedTiles.Keys.ToArray();
+        /*
+        Todo: These two loops take bloody ages
+        
+        Probably way better to determine load/unload instructions
+        while we're traversing the quadtree
+        */
+
+        var loadedKeys = _tileMap.GetKeyArray(Allocator.Temp);
         for (int i = 0; i < loadedKeys.Length; i++) {
             if (!_visibleSet.Contains(loadedKeys[i])) {
                 _toUnload.Add(loadedKeys[i]);
@@ -212,7 +213,7 @@ public class TerrainSystem : MonoBehaviour {
         }
 
         for (int i = 0; i < _visibleSet.Length; i++) {
-            if (!_loadedTiles.ContainsKey(_visibleSet[i])) {
+            if (!_tileMap.ContainsKey(_visibleSet[i])) {
                 _toLoad.Add(_visibleSet[i]);
             }
         }
@@ -245,7 +246,7 @@ public class TerrainSystem : MonoBehaviour {
             }
 
             Color gizmoColor = Color.red;
-            if (_loadedTiles.ContainsKey(node)) {
+            if (_tileMap.ContainsKey(node)) {
                 gizmoColor = Color.HSVToRGB(node.depth / (float)tree.MaxDepth, 0.9f, 1f);
             }
 
@@ -258,27 +259,29 @@ public class TerrainSystem : MonoBehaviour {
         for (int i = 0; i < toUnload.Length; i++) {
             TreeNode node = toUnload[i];
 
-            if (!_loadedTiles.ContainsKey(node)) {
+            if (!_tileMap.ContainsKey(node)) {
                 Debug.LogWarningFormat("Attempting to unload node without active mesh assigned to it: {0}", toUnload[i].bounds);
                 continue;
             }
 
             // Debug.Log(string.Format("Unloading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
-            var mesh = _loadedTiles[node];
+            int idx = _tileMap[node];
+            var mesh = _tiles[idx];
             mesh.gameObject.SetActive(false);
 
-            _tilePool.Push(mesh);
-            _loadedTiles.Remove(node);
+            _tileMap.Remove(node);
+            _tileIndexPool.Push(idx);
         }
     }
 
     /* Todo: Optimize
-     * - Store textures with their tiles, allocate at startup
-     * - Allocate height and color arrays at startup too?
+     * - Run as Burst Job
      */
     private void Load(NativeList<TreeNode> toLoad) {
         int numVerts = _tileResolution + 1;
+
+        var streamHandles = new NativeArray<JobHandle>(toLoad.Length, Allocator.Temp, NativeArrayOptions.ClearMemory);
 
         for (int i = 0; i < toLoad.Length; i++) {
             var node = toLoad[i];
@@ -288,18 +291,19 @@ public class TerrainSystem : MonoBehaviour {
             const float lMin = 2.33f, lMax = 2.66f;
             var lerpRanges = new Vector4(_lodDistances[node.depth] * lMin, _lodDistances[node.depth] * lMax);
 
-            if (_loadedTiles.ContainsKey(node)) {
+            if (_tileMap.ContainsKey(node)) {
                 Debug.LogWarningFormat("Attempting to load tile that's already in use! {0}", node);
                 continue;
             }
 
-            if (_tilePool.Count < 1) {
-                Debug.LogWarningFormat("Dynamically allocating new tile to accomodate demand. Total tiles: {0}", _totalTiles);
+            if (_tileIndexPool.Count < 1) {
+                Debug.LogWarningFormat("Dynamically allocating new tile to accomodate demand. Total tiles: {0}", _tiles.Count);
                 AllocateNewTileInPool();
             }
 
-            var mesh = _tilePool.Pop();
-            _loadedTiles.Add(node, mesh);
+            int idx = _tileIndexPool.Pop();
+            _tileMap[node] = idx;
+            var mesh = _tiles[idx];
 
             float3 position = new float3(node.bounds.position.x, 0f, node.bounds.position.z);
             mesh.Transform.position = position;
@@ -310,7 +314,24 @@ public class TerrainSystem : MonoBehaviour {
 
             var heights = mesh.HeightMap.GetRawTextureData<byte2>();
             var normals = mesh.NormalMap.GetRawTextureData<float2>();
-            GenerateTileHeights(heights, normals, numVerts, _heightSampler, position, node.bounds.size.x);
+
+            var generateJob = new StreamHeightDataJob() {
+                heights=heights,
+                normals=normals,
+                numVerts=numVerts,
+                sampler=_heightSampler,
+                position=position,
+                scale=node.bounds.size.x
+            };
+            streamHandles[i] = generateJob.Schedule(numVerts*numVerts, 32);
+        }
+
+        JobHandle.CompleteAll(streamHandles);
+
+        for (int i = 0; i < toLoad.Length; i++) {
+            var node = toLoad[i];
+            var mesh = _tiles[_tileMap[node]];
+
             mesh.HeightMap.Apply(false);
             mesh.NormalMap.Apply(true);
 
@@ -325,10 +346,14 @@ public class TerrainSystem : MonoBehaviour {
     }
 
     private void AllocateNewTileInPool() {
-        var tile = CreateTileObject("tile_" + _totalTiles++, _tileResolution, _material);
+        int idx = _tiles.Count;
+        var tile = CreateTileObject("tile_" + idx, _tileResolution, _material);
+        
         tile.Transform.parent = transform;
         tile.gameObject.SetActive(false);
-        _tilePool.Push(tile);
+
+        _tileIndexPool.Push(idx);
+        _tiles.Add(tile);
     }
 
     private static TerrainTile CreateTileObject(string name, int resolution, Material material) {
@@ -342,7 +367,53 @@ public class TerrainSystem : MonoBehaviour {
 	    return tile;
 	}
 
-    private static void GenerateTileHeights(NativeSlice<byte2> heights, NativeSlice<float2> normals, int numVerts, IHeightSampler sampler, Vector3 position, float scale) {
+    [BurstCompile]
+    public struct StreamHeightDataJob : IJobParallelFor {
+        public NativeSlice<byte2> heights;
+        public NativeSlice<float2> normals;
+        public int numVerts;
+        public HeightSampler sampler;
+        public Vector3 position;
+        public float scale;
+        
+        public void Execute(int idx) {
+            float stepSize = scale / (float)(numVerts - 1);
+            float stepSizeNormals = scale / (float)(numVerts - 1);
+            float delta = 0.001f * scale;
+
+            int x = idx % numVerts;
+            int z = idx / numVerts;
+
+            float xPos = position.x + x * stepSize;
+            float zPos = position.z + z * stepSize;
+
+            float height = sampler.Sample(xPos, zPos);
+
+            heights[idx] = new byte2(
+                (byte)(Mathf.RoundToInt(height * 65535f) >> 8),
+                (byte)(Mathf.RoundToInt(height * 65535f))
+            );
+
+            xPos = position.x + x * stepSizeNormals;
+            zPos = position.z + z * stepSizeNormals;
+
+            float heightL = sampler.Sample(xPos + delta, zPos);
+            float heightR = sampler.Sample(xPos - delta, zPos);
+            float heightB = sampler.Sample(xPos, zPos - delta);
+            float heightT = sampler.Sample(xPos, zPos + delta);
+
+            Vector3 lr = new Vector3(delta * 2f, (heightR - heightL) * sampler.HeightScale, 0f);
+            Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, delta * 2f);
+            Vector3 normal = Vector3.Cross(bt, lr).normalized;
+
+            // Note: normal z-component is recalculated on the gpu, which saves transfer memory
+            normals[idx] = new float2(
+                0.5f + normal.x * 0.5f,
+                0.5f + normal.y * 0.5f);
+        }
+    }
+
+    private static void GenerateTileHeights(NativeSlice<byte2> heights, NativeSlice<float2> normals, int numVerts, HeightSampler sampler, Vector3 position, float scale) {
         /*
          Todo: These sampling step sizes are off somehow, at least for normals
          I'm guessing it's my silly use of non-power-of-two textures, so let's
