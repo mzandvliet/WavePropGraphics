@@ -7,7 +7,13 @@ using System.Runtime.InteropServices;
 using Unity.Burst;
 
 /*
-Todo: culling using TestPlanesAABB
+Todo: 
+
+- culling using Quadtree traversal and TestPlanesAABB
+- Post-fix expanded quadtree to ensure neighbors differ by no
+more than one level of depth. Or mathematically guarantee that
+expansion algorithm always yields such a balanced tree.
+
 */
 
 [BurstCompile]
@@ -70,7 +76,7 @@ public struct ExpandQuadTreeQueueLoadsJob : IJob {
             }
 
             // If not, we should create children if we're in LOD range
-            if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[node.depth])) {
+            if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[node.depth]*1.33f)) {
                 node = tree.Expand(nodeIdx);
                 tree[nodeIdx] = node;
 
@@ -123,8 +129,8 @@ public static class TreeUtil {
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float Sqr(float val) {
-        return val * val;
+    public static float Sqr(float x) {
+        return x * x;
     }
 
     public static int GetMortonTreeIndex(int depth, int x, int y) {
@@ -223,7 +229,7 @@ public struct Tree : System.IDisposable {
         }
 
         bounds.position.y = lowest;
-        bounds.size.y = highest - lowest;
+        bounds.size.y = highest - lowest + 1;
 
         return bounds;
     }

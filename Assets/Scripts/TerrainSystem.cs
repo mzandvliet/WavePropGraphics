@@ -190,7 +190,7 @@ public class TerrainSystem : MonoBehaviour {
 
         /*
         This bit has been occupying me for waaaay too long.
-        I keep getting uncoordinated loads and unloads.
+        I kept getting uncoordinated loads and unloads.
 
         A given tile will either:
         - Not need to change right now
@@ -288,7 +288,7 @@ public class TerrainSystem : MonoBehaviour {
 
             Debug.Log(string.Format("Loading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
-            const float lMin = 3f, lMax = 3.5f;
+            const float lMin = 2.33f, lMax = 2.66f;
             var lerpRanges = new Vector4(_lodDistances[node.depth] * lMin, _lodDistances[node.depth] * lMax);
 
             if (_loadedTiles.ContainsKey(node)) {
@@ -345,7 +345,7 @@ public class TerrainSystem : MonoBehaviour {
         /* Todo: can optimize normal generation by first sampling all heights, then using those to generate normals.
          * Only need procedural samples at edges. */
 
-        float delta = 0.01f * scale;
+        float delta = 0.001f * scale;
 
         for (int z = 0; z < numVerts; z++) {
             for (int x = 0; x < numVerts; x++) {
