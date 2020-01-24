@@ -6,6 +6,10 @@ using Unity.Jobs;
 using System.Runtime.InteropServices;
 using Unity.Burst;
 
+/*
+Todo: culling using TestPlanesAABB
+*/
+
 [BurstCompile]
 public struct ExpandQuadTreeJob : IJob {
     [ReadOnly] public CameraInfo camInfo;
@@ -14,7 +18,7 @@ public struct ExpandQuadTreeJob : IJob {
     public Tree tree;
 
     public void Execute() {
-        var stack = new NativeStack<int>(mathi.SumPowersOfFour(tree.MaxLevels), Allocator.Temp);
+        var stack = new NativeStack<int>(mathi.SumPowersOfFour(tree.MaxDepth), Allocator.Temp);
         stack.Push(0);
 
         while (stack.Count > 0) {
@@ -22,24 +26,20 @@ public struct ExpandQuadTreeJob : IJob {
             var node = tree[nodeIdx];
 
             // If we're at the deepest lod level, no need to expand further
-            if (node.depth == tree.MaxLevels - 1) {
-                node.payload = 1;
-                tree[nodeIdx] = node;
-            } else
+            if (node.depth == tree.MaxDepth - 1) {
+                continue;
+            }
+
             // If not, we should create children if we're in LOD range
             if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[node.depth])) {
                 node = tree.Expand(nodeIdx);
-                node.payload = -1;
                 tree[nodeIdx] = node;
 
                 for (int i = 0; i < 4; i++) {
                     stack.Push(node[i]);
                 }
 
-            } else {
-                // If we don't need to expand, just add to the list
-                node.payload = 1;
-                tree[nodeIdx] = node;
+                continue;
             }
         }
 
@@ -48,22 +48,64 @@ public struct ExpandQuadTreeJob : IJob {
 }
 
 [BurstCompile]
-public struct DiffQuadTreesJob : IJob {
-    [ReadOnly] public Tree a;
-    [ReadOnly] public Tree b;
+public struct ExpandQuadTreeQueueLoadsJob : IJob {
+    [ReadOnly] public CameraInfo camInfo;
+    [ReadOnly] public NativeSlice<float> lodDistances;
 
-    public NativeList<int> diff;
+    public Tree tree;
+    public NativeList<TreeNode> visibleSet;
 
     public void Execute() {
-        diff.Clear();
+        var stack = new NativeStack<int>(mathi.SumPowersOfFour(tree.MaxDepth), Allocator.Temp);
+        stack.Push(0);
 
-        for (int i = 0; i < a.Count; i++) {
-            if (a[i].payload > -1 && !b.Contains(a[i].bounds)) {
-                diff.Add(i);
+        while (stack.Count > 0) {
+            int nodeIdx = stack.Pop();
+            var node = tree[nodeIdx];
+
+            // If we're at the deepest lod level, no need to expand further, set visible
+            if (node.depth == tree.MaxDepth - 1) {
+                visibleSet.Add(node);
+                continue;
             }
+
+            // If not, we should create children if we're in LOD range
+            if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[node.depth])) {
+                node = tree.Expand(nodeIdx);
+                tree[nodeIdx] = node;
+
+                for (int i = 0; i < 4; i++) {
+                    stack.Push(node[i]);
+                }
+
+                continue;
+            }
+
+            // If we're not in need of further refinement, set visible
+            visibleSet.Add(node);
         }
+
+        stack.Dispose();
     }
 }
+
+// [BurstCompile]
+// public struct DiffQuadTreesJob : IJob {
+//     [ReadOnly] public NativeList<TreeNode> a;
+//     [ReadOnly] public NativeList<TreeNode> b;
+
+//     public NativeList<TreeNode> diff;
+
+//     public void Execute() {
+//         diff.Clear();
+
+//         for (int i = 0; i < a.Length; i++) {
+//             if (a[i].payload > -1 && !b.Contains(a[i])) {
+//                 diff.Add(a[i]);
+//             }
+//         }
+//     }
+// }
 
 public static class TreeUtil {
     public static bool Intersect(Bounds node, CameraInfo camInfo, float range) {
@@ -95,7 +137,7 @@ public struct Tree : System.IDisposable {
     private NativeList<TreeNode> _nodes;
     private HeightSampler _heights;
 
-    public int MaxLevels {
+    public int MaxDepth {
         get;
         private set;
     }
@@ -104,9 +146,13 @@ public struct Tree : System.IDisposable {
         get => _nodes.Length;
     }
 
+    public NativeList<TreeNode> Nodes{
+        get => _nodes;
+    }
+
     public Tree(Bounds bounds, int maxLevels, HeightSampler heights, Allocator allocator) {
         _nodes = new NativeList<TreeNode>(mathi.SumPowersOfFour(maxLevels), allocator);
-        MaxLevels = maxLevels;
+        MaxDepth = maxLevels;
         _heights = heights;
         NewNode(bounds, 0);
     }
@@ -189,9 +235,9 @@ public struct Tree : System.IDisposable {
         set => _nodes[i] = value;
     }
 
-    public bool Contains(Bounds bounds) {
+    public bool Contains(TreeNode node) {
         for (int i = 0; i < _nodes.Length; i++) {
-            if (_nodes[i].bounds == bounds) {
+            if (_nodes[i].bounds == node.bounds) {
                 return true;
             }
         }
@@ -204,18 +250,26 @@ Todo:
 if we use Morton indexing there is no need for much of this structure
 */
 [StructLayout(LayoutKind.Sequential)]
-public unsafe struct TreeNode {
-    public int payload;
-
+public unsafe struct TreeNode : System.IEquatable<TreeNode> {
     public Bounds bounds;
     public int depth;
     
+    // embed fixed-size array directly in struct memory
     private fixed int children[4];
+
+    public bool IsLeaf {
+        get {
+            bool leaf = true;
+            for (int i = 0; i < 4; i++) {
+                leaf &= this[i] == -1;
+            }
+            return leaf;
+        }
+    }
 
     public TreeNode(Bounds bounds, int depth) {
         this.bounds = bounds;
         this.depth = depth;
-        payload = -1;
 
         fixed(int* p = children) {
             for (int i = 0; i < 4; i++) {
@@ -225,8 +279,6 @@ public unsafe struct TreeNode {
     }
 
     public unsafe int this[int idx] {
-        // Index the 4 child indices as if they are an int[4] array
-
         get {
             fixed (int* p = children) {
                 return p[idx];
@@ -238,9 +290,36 @@ public unsafe struct TreeNode {
             }
         }
     }
+
+    public override bool Equals(System.Object obj) {
+        return obj is TreeNode && this == (TreeNode)obj;
+    }
+
+    public bool Equals(TreeNode other) {
+        return this == other;
+    }
+
+    public override int GetHashCode() {
+        return bounds.GetHashCode();
+    }
+
+    public static bool operator ==(TreeNode a, TreeNode b) {
+        return
+            a.bounds.position.x == b.bounds.position.x &&
+            a.bounds.position.z == b.bounds.position.z &&
+            a.depth == b.depth;
+    }
+
+    public static bool operator !=(TreeNode a, TreeNode b) {
+        return !(a == b);
+    }
+
+    public override string ToString() {
+        return string.Format("[D{0}: {1}]", depth, bounds);
+    }
 }
 
-public struct Bounds {
+public struct Bounds : System.IEquatable<Bounds> {
     // These are in METERS
     public int3 position;
     public int3 size;
@@ -254,13 +333,21 @@ public struct Bounds {
         return obj is Bounds && this == (Bounds)obj;
     }
 
+    public bool Equals(Bounds other) {
+        return this == other;
+    }
+
     public override int GetHashCode() {
-        return position.GetHashCode() ^ size.x.GetHashCode();
+        // return position.GetHashCode() ^ size.x.GetHashCode();
+        unchecked {
+            return (position.xz.GetHashCode() * 397) ^ size.x.GetHashCode();
+        }
     }
     
     public static bool operator ==(Bounds a, Bounds b) {
         return 
-            a.position.x == b.position.x && a.position.z == b.position.z &&
+            a.position.x == b.position.x &&
+            a.position.z == b.position.z &&
             a.size.x == b.size.x;
     }
     public static bool operator !=(Bounds a, Bounds b) {

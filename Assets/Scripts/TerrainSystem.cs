@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.Linq;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
@@ -70,23 +71,18 @@ public class TerrainSystem : MonoBehaviour {
     private NativeArray<float> _lodDistances;
 
     private Stack<TerrainTile> _tilePool;
-    private IDictionary<Bounds, TerrainTile> _activeMeshes;
+    private IDictionary<TreeNode, TerrainTile> _loadedTiles;
 
-    private Tree _visibleNodes;
-    private NativeList<int> _toLoad; // indexes into _visibleNodes
-
-    private Tree _loadedNodes;
-    private NativeList<int> _toUnload; // indexes into _loadedNodes
+    private Tree _visibleTree;
+    private NativeList<TreeNode> _visibleSet;
+    private NativeList<TreeNode> _toLoad;
+    private NativeList<TreeNode> _toUnload;
 
     private HeightSampler _heightSampler;
 
     void Awake() {
         _lodDistances = new NativeArray<float>(_numLods, Allocator.Persistent);
         QuadTree.GenerateLodDistances(_lodDistances, _lodZeroRange);
-
-        for (int i = 0; i < _lodDistances.Length; i++) {
-            Debug.LogFormat("LOD_{0} Dist: {1}", i, _lodDistances[i]);
-        }
 
         _heightSampler = new HeightSampler(_heightScale);
 
@@ -95,20 +91,20 @@ public class TerrainSystem : MonoBehaviour {
         var bMin = new int3(-_lodZeroScale / 2, 0, -_lodZeroScale / 2);
         var lodZeroScale = new int3(_lodZeroScale, _heightScale, _lodZeroScale);
 
-        _visibleNodes = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
-        _loadedNodes =  new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
-        _toLoad = new NativeList<int>(maxNodes, Allocator.Persistent);
-        _toUnload = new NativeList<int>(maxNodes, Allocator.Persistent);
+        _visibleTree = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
+        _visibleSet = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
+        _toLoad = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
+        _toUnload = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
+
+        _loadedTiles = new Dictionary<TreeNode, TerrainTile>();
 
         CreatePooledTiles();
-        _activeMeshes = new Dictionary<Bounds, TerrainTile>();
     }
 
     private void OnDestroy() {
         _lodDistances.Dispose();
 
-        _visibleNodes.Dispose();
-        _loadedNodes.Dispose();
+        _visibleTree.Dispose();
         _toLoad.Dispose();
         _toUnload.Dispose();
     }
@@ -167,75 +163,116 @@ public class TerrainSystem : MonoBehaviour {
     private CameraInfo _camInfo; // Todo: make fully stack-based using fixed array struct
 
     private void Update() {
+        /*
+        Todo:
+        Only update if camera moved more than a minimum from last update position
+        */
+
         _camInfo = CameraInfo.Create(_camera, Allocator.Persistent);
 
         var bMin = new int3(-_lodZeroScale / 2, 0, -_lodZeroScale / 2);
         var lodZeroScale = new int3(_lodZeroScale, _heightScale, _lodZeroScale);
 
-        _visibleNodes.Clear(new Bounds(bMin, lodZeroScale));
-        _toLoad.Clear();
-        _toUnload.Clear();
-
-        var expandTreeJob = new ExpandQuadTreeJob() {
+        _visibleTree.Clear(new Bounds(bMin, lodZeroScale));
+        _visibleSet.Clear();
+        
+        var expandTreeJob = new ExpandQuadTreeQueueLoadsJob() {
             camInfo = _camInfo,
             lodDistances = _lodDistances,
-            tree = _visibleNodes
+            tree = _visibleTree,
+            visibleSet = _visibleSet
         };
-        var expandHandle = expandTreeJob.Schedule();
-
-        var unloadDiffJob = new DiffQuadTreesJob() {
-            a = _loadedNodes,
-            b = _visibleNodes,
-            diff = _toUnload,
-        };
-        var loadDiffJob = new DiffQuadTreesJob()
-        {
-            a = _visibleNodes,
-            b = _loadedNodes,
-            diff = _toLoad
-        };
-
-        _lodJobHandle = JobHandle.CombineDependencies(
-            unloadDiffJob.Schedule(expandHandle),
-            loadDiffJob.Schedule(expandHandle)
-        );
+        _lodJobHandle = expandTreeJob.Schedule();
     }
 
     private void LateUpdate() {
         _lodJobHandle.Complete();
 
+        /*
+        This bit has been occupying me for waaaay too long.
+        I keep getting uncoordinated loads and unloads.
+
+        A given tile will either:
+        - Not need to change right now
+        - Refine to next LOD depth
+        - Simplify to previous LOD depth
+
+        A refinement would constitute:
+        - Load 4 children
+        - Unload 1 parent
+
+        These should act as one atomic operation
+        */
+
+        _toLoad.Clear();
+        _toUnload.Clear();
+
+        var loadedKeys = _loadedTiles.Keys.ToArray();
+        for (int i = 0; i < loadedKeys.Length; i++) {
+            if (!_visibleSet.Contains(loadedKeys[i])) {
+                _toUnload.Add(loadedKeys[i]);
+            }
+        }
+
+        for (int i = 0; i < _visibleSet.Length; i++) {
+            if (!_loadedTiles.ContainsKey(_visibleSet[i])) {
+                _toLoad.Add(_visibleSet[i]);
+            }
+        }
+
         Profiler.BeginSample("Unload");
-        Unload(_loadedNodes, _toUnload);
-        Profiler.EndSample();
-        Profiler.BeginSample("Load");
-        Load(_visibleNodes, _toLoad);
+        Unload(_toUnload);
         Profiler.EndSample();
 
-        // We blindly assume all loads and unloads succeed
-        Swap();
+        Profiler.BeginSample("Load");
+        Load(_toLoad);
+        Profiler.EndSample();
 
         _camInfo.Dispose();
     }
 
-    private void Swap() {
-        var temp = _loadedNodes;
-        _loadedNodes = _visibleNodes;
-        _visibleNodes = temp;
+    private void OnDrawGizmos() {
+        if (!Application.isPlaying) {
+            return;
+        }
+
+        DrawTree(_visibleTree);
     }
 
-    private void Unload(Tree tree, NativeList<int> toUnload) {
-        for (int i = 0; i < toUnload.Length; i++) {
-            var node = tree[toUnload[i]];
+    private void DrawTree(Tree tree) {
+        for (int i = 0; i < tree.Nodes.Length; i++) {
+            var node = tree.Nodes[i];
 
-            if (!_activeMeshes.ContainsKey(node.bounds)) {
-                Debug.LogWarningFormat("Attempting to unload node with id {0} without active mesh assigned to it: {1}", toUnload[i], node.bounds);
+            if (!node.IsLeaf) {
                 continue;
             }
 
-            var mesh = _activeMeshes[node.bounds];
-            _tilePool.Push(mesh);
-            _activeMeshes.Remove(node.bounds);
+            Color gizmoColor = Color.red;
+            if (_loadedTiles.ContainsKey(node)) {
+                gizmoColor = Color.HSVToRGB(node.depth / (float)tree.MaxDepth, 0.9f, 1f);
+            }
+
+            Gizmos.color = gizmoColor;
+            Gizmos.DrawWireCube((float3)(node.bounds.position + node.bounds.size / 2), (float3)node.bounds.size);
+        }
+    }
+
+    private void Unload(NativeList<TreeNode> toUnload) {
+        for (int i = 0; i < toUnload.Length; i++) {
+            TreeNode node = toUnload[i];
+
+            if (!_loadedTiles.ContainsKey(node)) {
+                Debug.LogWarningFormat("Attempting to unload node without active mesh assigned to it: {0}", toUnload[i].bounds);
+                continue;
+            }
+
+            Debug.Log(string.Format("Unloading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
+
+            var mesh = _loadedTiles[node];
             mesh.gameObject.SetActive(false);
+
+            _tilePool.Push(mesh);
+            _loadedTiles.Remove(node);
         }
     }
 
@@ -243,17 +280,24 @@ public class TerrainSystem : MonoBehaviour {
      * - Store textures with their tiles, allocate at startup
      * - Allocate height and color arrays at startup too?
      */
-    private void Load(Tree tree, NativeList<int> toLoad) {
+    private void Load(NativeList<TreeNode> toLoad) {
         int numVerts = _tileResolution + 1;
 
         for (int i = 0; i < toLoad.Length; i++) {
-            var node = tree[toLoad[i]];
+            var node = toLoad[i];
+
+            Debug.Log(string.Format("Loading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
             const float lMin = 3f, lMax = 3.5f;
             var lerpRanges = new Vector4(_lodDistances[node.depth] * lMin, _lodDistances[node.depth] * lMax);
 
+            if (_loadedTiles.ContainsKey(node)) {
+                Debug.LogWarningFormat("Attempting to load tile that's already in use! {0}", node);
+                continue;
+            }
+
             var mesh = _tilePool.Pop();
-            _activeMeshes.Add(node.bounds, mesh);
+            _loadedTiles.Add(node, mesh);
 
             float3 position = new float3(node.bounds.position.x, 0f, node.bounds.position.z);
             mesh.Transform.position = position;
@@ -273,14 +317,13 @@ public class TerrainSystem : MonoBehaviour {
 
             mesh.Mesh.bounds = new UnityEngine.Bounds(Vector3.zero, (float3)node.bounds.size);
 
-            mesh.gameObject.name = string.Format("Terrain_D{0}_", node.depth, node.bounds.position.x, node.bounds.position.z);
+            mesh.gameObject.name = string.Format("Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z);
             mesh.gameObject.SetActive(true);
         }
     }
 
     private static TerrainTile CreateTile(string name, int resolution, Material material) {
         var tileObject = new GameObject(name);
-        tileObject.transform.position = Vector3.zero;
         var tile = tileObject.AddComponent<TerrainTile>();
         tile.Create(resolution);
 	    tile.MeshRenderer.material = material;
@@ -297,7 +340,7 @@ public class TerrainSystem : MonoBehaviour {
          fix that off-by-one thing everywhere.
          */
         float stepSize = scale / (float)(numVerts-1);
-        float stepSizeNormals = scale / (float)(numVerts);
+        float stepSizeNormals = scale / (float)(numVerts-1);
 
         /* Todo: can optimize normal generation by first sampling all heights, then using those to generate normals.
          * Only need procedural samples at edges. */
@@ -336,26 +379,6 @@ public class TerrainSystem : MonoBehaviour {
                     0.5f + normal.y * 0.5f);
             }
         }
-    }
-
-    private void OnDrawGizmos() {
-        if (!Application.isPlaying) {
-            return;
-        }
-
-        // var camInfo = CameraInfo.Create(_camera);
-
-        // var bMin = new Vector3(-_lodZeroScale*0.5f, 0f, -_lodZeroScale*0.5f);
-        // var lodZeroScale = new Vector3(_lodZeroScale, _heightScale, _lodZeroScale);
-        // QTNode root = new QTNode(bMin, lodZeroScale);
-        // QuadTree.ExpandNodeRecursively(0, root, camInfo, _lodDistances, _visibleNodes, _heightSampler);
-        // QuadTree.DrawSelectedNodes(_visibleNodes);
-
-        // Gizmos.color = Color.magenta;
-        // Gizmos.DrawRay(camInfo.position, Vector3.up * 1000f);
-        // Gizmos.DrawSphere(camInfo.position, 1f);
-
-        // camInfo.Dispose();
     }
 }
 

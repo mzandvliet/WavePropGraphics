@@ -102,26 +102,6 @@ public static class QuadTree {
         }
         return false;
     }
-
-    public static void DrawNodeRecursively(QTNode node, int currentLod, int maxLod) {
-        Gizmos.color = Color.Lerp(Color.red, Color.green, currentLod / (float)maxLod);
-        Gizmos.DrawWireCube(node.Center, node.Size);
-        if (node.Children != null) {
-            for (int i = 0; i < node.Children.Length; i++) {
-                DrawNodeRecursively(node.Children[i], currentLod + 1, maxLod);
-            }
-        }
-    }
-
-    public static void DrawSelectedNodes(IList<IList<QTNode>> nodes) {
-        for (int i = 0; i < nodes.Count; i++) {
-            Gizmos.color = Color.Lerp(Color.red, Color.green, i / (float)nodes.Count);
-            for (int j = 0; j < nodes[i].Count; j++) {
-                var node = nodes[i][j];
-                Gizmos.DrawWireCube(node.Center, node.Size);
-            }
-        }
-    }
 }
 
 public class QTNode {
