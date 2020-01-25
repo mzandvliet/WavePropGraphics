@@ -23,6 +23,9 @@ public struct ExpandQuadTreeJob : IJob {
 
     public Tree tree;
 
+    public NativeList<TreeNode> _toUnload;
+    public NativeList<TreeNode> _toLoad;
+
     public void Execute() {
         var stack = new NativeStack<int>(mathi.SumPowersOfFour(tree.MaxDepth), Allocator.Temp);
         stack.Push(0);
@@ -33,23 +36,49 @@ public struct ExpandQuadTreeJob : IJob {
 
             // If we're at the deepest lod level, no need to expand further
             if (node.depth == tree.MaxDepth - 1) {
+                MaybeLoadNode(nodeIdx);
                 continue;
             }
 
             // If not, we should create children if we're in LOD range
             if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[node.depth])) {
-                node = tree.Expand(nodeIdx);
-                tree[nodeIdx] = node;
+                if (node.IsLeaf) {
+                    node = tree.Expand(nodeIdx);
+                    tree[nodeIdx] = node;
+                }
 
                 for (int i = 0; i < 4; i++) {
                     stack.Push(node[i]);
                 }
 
+                MaybeUnloadNode(nodeIdx);
                 continue;
+            } else if (!node.IsLeaf) {
+                tree.Contract(nodeIdx, _toUnload);
             }
+
+            MaybeLoadNode(nodeIdx);
         }
 
         stack.Dispose();
+    }
+
+    private void MaybeLoadNode(int nodeIdx) {
+        var node = tree[nodeIdx];
+        if (!node.isLoaded) {
+            node.isLoaded = true;
+            _toLoad.Add(node);
+            tree[nodeIdx] = node;
+        }
+    }
+
+    private void MaybeUnloadNode(int nodeIdx) {
+        var node = tree[nodeIdx];
+        if (node.isLoaded) {
+            node.isLoaded = false;
+            _toUnload.Add(node);
+            tree[nodeIdx] = node;
+        }
     }
 }
 
@@ -203,6 +232,38 @@ public struct Tree : System.IDisposable {
         return node; // Convenience, since caller's old copy of Node data will be invalidated
     }
 
+    public void Contract(int idx, NativeList<TreeNode> toUnload) {
+        var stack = new NativeStack<int>(mathi.SumPowersOfFour(MaxDepth), Allocator.Temp);
+        stack.Push(idx);
+
+        while (stack.Count > 0) {
+            int nodeIdx = stack.Pop();
+            var node = this[nodeIdx];
+
+            if (!node.IsLeaf) {
+                for (int i = 0; i < 4; i++) {
+                    stack.Push(node[i]);
+                }
+
+                // node[0] = -1;
+                // node[1] = -1;
+                // node[2] = -1;
+                // node[3] = -1;
+                // _nodes[idx] = node;
+            }
+
+            if (node.isLoaded) {
+                toUnload.Add(node);
+            }
+        }
+
+        stack.Items.Sort();
+
+        for (int i = stack.Items.Length-1; i <= 0; i++) {
+            // Todo: lol: no remove function, makes sense
+        }
+    }
+
     private static Bounds FitHeightSamples(Bounds bounds, HeightSampler sampler) {
         /* Todo: move this logic out of this class, too much business going on */
 
@@ -259,6 +320,7 @@ if we use Morton indexing there is no need for much of this structure
 public unsafe struct TreeNode : System.IEquatable<TreeNode> {
     public Bounds bounds;
     public int depth;
+    public bool isLoaded;
     
     // embed fixed-size array directly in struct memory
     private fixed int children[4];
@@ -276,6 +338,7 @@ public unsafe struct TreeNode : System.IEquatable<TreeNode> {
     public TreeNode(Bounds bounds, int depth) {
         this.bounds = bounds;
         this.depth = depth;
+        this.isLoaded = false;
 
         fixed(int* p = children) {
             for (int i = 0; i < 4; i++) {

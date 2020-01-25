@@ -104,7 +104,7 @@ Shader "Custom/Terrain/TerrainTile" {
 
 				// Construct morph parameter based on distance to camera
 				float distance = length(wsVertex.xyz - _WorldSpaceCameraPos);
-				float morph = invLerp(_LerpRanges.x, _LerpRanges.y, distance);
+				float morph = smoothstep(0, 1, invLerp(_LerpRanges.x, _LerpRanges.y, distance));
 
 				// Morph in local unit space
 				float2 morphedVertex = morphVertex(localVertex, localVertex, morph);

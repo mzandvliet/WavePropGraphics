@@ -85,6 +85,15 @@ public class TerrainSystem : MonoBehaviour {
         _lodDistances = new NativeArray<float>(_numLods, Allocator.Persistent);
         QuadTree.GenerateLodDistances(_lodDistances, _lodZeroRange);
 
+        var testList = new NativeList<TreeNode>(128, Allocator.Persistent);
+        Debug.LogFormat("test list length: {0}, capacity: {1}", testList.Length, testList.Capacity);
+        for (int i = 0; i < 92; i++) {
+            testList.Add(new TreeNode(new Bounds(), 1));
+        }
+        testList.Resize(64, NativeArrayOptions.UninitializedMemory);
+        Debug.LogFormat("test list length: {0}, capacity: {1}", testList.Length, testList.Capacity);
+        testList.Dispose();
+
         _heightSampler = new HeightSampler(_heightScale);
 
         int maxNodes = mathi.SumPowersOfFour(_numLods);
@@ -164,67 +173,28 @@ public class TerrainSystem : MonoBehaviour {
         var bMin = new int3(-_lodZeroScale / 2, 0, -_lodZeroScale / 2);
         var lodZeroScale = new int3(_lodZeroScale, _heightScale, _lodZeroScale);
 
-        _visibleTree.Clear(new Bounds(bMin, lodZeroScale));
-        _visibleSet.Clear();
+        // _visibleTree.Clear(new Bounds(bMin, lodZeroScale));
+        // _visibleSet.Clear();
         
-        var expandTreeJob = new ExpandQuadTreeQueueLoadsJob() {
-            camInfo = _camInfo,
-            lodDistances = _lodDistances,
-            tree = _visibleTree,
-            visibleSet = _visibleSet
-        };
-        _lodJobHandle = expandTreeJob.Schedule();
+        // var expandTreeJob = new ExpandQuadTreeQueueLoadsJob() {
+        //     camInfo = _camInfo,
+        //     lodDistances = _lodDistances,
+        //     tree = _visibleTree,
+        //     visibleSet = _visibleSet
+        // };
+        // _lodJobHandle = expandTreeJob.Schedule();
     }
 
     private void LateUpdate() {
         _lodJobHandle.Complete();
 
-        /*
-        This bit has been occupying me for waaaay too long.
-        I kept getting uncoordinated loads and unloads.
+        // Profiler.BeginSample("Unload");
+        // Unload(_toUnload);
+        // Profiler.EndSample();
 
-        A given tile will either:
-        - Not need to change right now
-        - Refine to next LOD depth
-        - Simplify to previous LOD depth
-
-        A refinement would constitute:
-        - Load 4 children
-        - Unload 1 parent
-
-        These should act as one atomic operation
-        */
-
-        _toLoad.Clear();
-        _toUnload.Clear();
-
-        /*
-        Todo: These two loops take bloody ages
-        
-        Probably way better to determine load/unload instructions
-        while we're traversing the quadtree
-        */
-
-        var loadedKeys = _tileMap.GetKeyArray(Allocator.Temp);
-        for (int i = 0; i < loadedKeys.Length; i++) {
-            if (!_visibleSet.Contains(loadedKeys[i])) {
-                _toUnload.Add(loadedKeys[i]);
-            }
-        }
-
-        for (int i = 0; i < _visibleSet.Length; i++) {
-            if (!_tileMap.ContainsKey(_visibleSet[i])) {
-                _toLoad.Add(_visibleSet[i]);
-            }
-        }
-
-        Profiler.BeginSample("Unload");
-        Unload(_toUnload);
-        Profiler.EndSample();
-
-        Profiler.BeginSample("Load");
-        Load(_toLoad);
-        Profiler.EndSample();
+        // Profiler.BeginSample("Load");
+        // Load(_toLoad);
+        // Profiler.EndSample();
 
         _camInfo.Dispose();
     }
@@ -288,7 +258,7 @@ public class TerrainSystem : MonoBehaviour {
 
             // Debug.Log(string.Format("Loading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
-            const float lMin = 2.33f, lMax = 2.66f;
+            const float lMin = 2.1f, lMax = 2.9f;
             var lerpRanges = new Vector4(_lodDistances[node.depth] * lMin, _lodDistances[node.depth] * lMax);
 
             if (_tileMap.ContainsKey(node)) {

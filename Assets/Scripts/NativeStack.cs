@@ -10,6 +10,10 @@ public struct NativeStack<T> : IDisposable where T : struct {
         get { return _current + 1; }
     }
 
+    public NativeArray<T> Items {
+        get => _items;
+    }
+
     public NativeStack(int capacity, Allocator allocator) {
         _items = new NativeArray<T>(capacity, allocator, NativeArrayOptions.ClearMemory);
         _current = -1;
