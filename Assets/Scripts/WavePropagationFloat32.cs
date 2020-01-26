@@ -8,10 +8,10 @@ using System.Runtime.CompilerServices;
 using Unity.Collections.LowLevel.Unsafe;
 
 namespace WavesBurstF32 {
-    public struct Octave : System.IDisposable {
+    public struct Tile : System.IDisposable {
         public PingPongBuffer<float> buffer;
 
-        public Octave(int resolution, int ticksPerFrame) {
+        public Tile(int resolution, int ticksPerFrame) {
             buffer = new PingPongBuffer<float>(resolution * resolution, Allocator.Persistent);
         }
 
@@ -52,37 +52,39 @@ namespace WavesBurstF32 {
     }
 
     public class WavePropagationFloat32 : MonoBehaviour {
-        private Octave[] _octaves;
+        private Tile[] _tiles;
 
-        private const int RES = 128; // current limiting factor: if we set this too big we create cache misses
-        private const int TILE_RES = 16;
-        private const int TILE_NUM = RES / TILE_RES;
+        private const int RES = 32; // current limiting factor: if we set this too big we create cache misses
+        // private const int TILE_RES = 16;
+        // private const int TILE_NUM = RES / TILE_RES;
+
+        const int NUM_TILES = 2;
 
         const int TICKSPERFRAME = 1;
-        const int NUMOCTAVES = 1;
 
-        private Texture2D _screenTex;
+        private Texture2D[] _screenTex;
 
         private uint _tick = 0;
-        private JobHandle _renderHandle;
 
         private void Awake() {
             Application.targetFrameRate = 60;
 
-            _octaves = new Octave[NUMOCTAVES];
-            for (int i = 0; i < NUMOCTAVES; i++) {
-                _octaves[i] = new Octave(RES, TICKSPERFRAME);
+            _tiles = new Tile[NUM_TILES];
+            for (int i = 0; i < NUM_TILES; i++) {
+                _tiles[i] = new Tile(RES, TICKSPERFRAME);
             }
 
-            _screenTex = new Texture2D(RES, RES, TextureFormat.RG16, false, true);
-            _screenTex.filterMode = FilterMode.Point;
+            _screenTex = new Texture2D[NUM_TILES];
+            for (int i = 0; i < NUM_TILES; i++) {
+                var tileTex = new Texture2D(RES, RES, TextureFormat.RG16, false, true);
+                tileTex.filterMode = FilterMode.Point;
+                _screenTex[i] = tileTex;
+            }
         }
 
         private void OnDestroy() {
-            _renderHandle.Complete();
-
-            for (int i = 0; i < _octaves.Length; i++) {
-                _octaves[i].Dispose();
+            for (int i = 0; i < _tiles.Length; i++) {
+                _tiles[i].Dispose();
             }
         }
 
@@ -90,20 +92,23 @@ namespace WavesBurstF32 {
         private int buffIdx1 = 1;
 
         private void Update() {
-           
-            var octave = _octaves[0];
+            var handles = new NativeList<JobHandle>(2, Allocator.Temp);
 
-            var simHandle = new JobHandle();
-            for (int i = 0; i < TICKSPERFRAME; i++) {
-                buffIdx0 = (buffIdx0 + 1) % 2;
-                buffIdx1 = (buffIdx0 + 1) % 2;
+            buffIdx0 = (buffIdx0 + 1) % 2;
+            buffIdx1 = (buffIdx0 + 1) % 2;
+
+            for (uint i = 0; i < 2; i++) {
+                var octave = _tiles[i];
+
+                var tileHandle = new JobHandle();
 
                 var impulseJob = new AddImpulseJob
                 {
                     tick = _tick,
+                    tile = new uint2(i, 0),
                     curr = octave.buffer.GetBuffer(buffIdx0),
                 };
-                simHandle = impulseJob.Schedule(simHandle);
+                tileHandle = impulseJob.Schedule(tileHandle);
 
                 var simulateJob = new PropagateJobParallelBatch
                 {
@@ -111,36 +116,64 @@ namespace WavesBurstF32 {
                     curr = octave.buffer.GetBuffer(buffIdx0),
                     next = octave.buffer.GetBuffer(buffIdx1),
                 };
-                simHandle = simulateJob.ScheduleBatch((RES-2) * (RES-2), RES-2, simHandle);
+                tileHandle = simulateJob.ScheduleBatch((RES - 2) * (RES - 2), RES - 2, tileHandle);
 
-                _tick++;
+                handles.Add(tileHandle);
             }
-            simHandle.Complete();
 
-            var texture = _screenTex.GetRawTextureData<byte2>();
-            var waveData = octave.buffer.GetBuffer(buffIdx1);
-            var renderJob = new RenderJobParallel
-            {
-                buf = waveData,
-                texture = texture
+            JobHandle.CompleteAll(handles);
+
+            var edgeSimJob = new PropagateLeftEdgeJobParallelBatch() {
+                tick = _tick,
+                curr_this = _tiles[1].buffer.GetBuffer(buffIdx0),
+                curr_that = _tiles[0].buffer.GetBuffer(buffIdx0),
+                next_this = _tiles[1].buffer.GetBuffer(buffIdx1),
+                next_that = _tiles[0].buffer.GetBuffer(buffIdx1),
             };
-            _renderHandle = renderJob.Schedule(RES * RES, 32, _renderHandle);
+            var edgeHandle = edgeSimJob.ScheduleBatch(RES, RES);
+            edgeHandle.Complete();
+
+            _tick++;
+
+            handles.Clear();
+
+            for (int i = 0; i < NUM_TILES; i++) {
+                var texture = _screenTex[i].GetRawTextureData<byte2>();
+                var waveData = _tiles[i].buffer.GetBuffer(buffIdx1);
+                var renderJob = new RenderJobParallel
+                {
+                    buf = waveData,
+                    texture = texture
+                };
+                var renderHandle = renderJob.Schedule(RES * RES, 32);
+                handles.Add(renderHandle);
+            }
+
+            JobHandle.CompleteAll(handles);
+
+            handles.Dispose();
         }
 
         private void LateUpdate() {
-            _renderHandle.Complete();
-            _screenTex.Apply(false);
+            for (int i = 0; i < NUM_TILES; i++) {
+                _screenTex[i].Apply(false);
+            }
         }
 
         private void OnGUI() {
-            float size = math.min(Screen.width, Screen.height);
-            GUI.DrawTexture(new Rect(0f, 0f, size, size), _screenTex, ScaleMode.ScaleToFit);
+            const float scale = 8f;
+            float size = RES * scale;
+
+            for (int i = 0; i < NUM_TILES; i++) {
+                GUI.DrawTexture(new Rect(i * size, 0f, size, size), _screenTex[i], ScaleMode.ScaleToFit);
+            }
         }
 
         [BurstCompile]
         public struct AddImpulseJob : IJob {
             public NativeArray<float> curr;
             public uint tick;
+            public uint2 tile;
 
             public void Execute() {
                 /*
@@ -151,7 +184,7 @@ namespace WavesBurstF32 {
 
                 Rng rng;
                 unchecked {
-                    rng = new Rng(0x816EFB5Du + tick * 0x7461CA0Du);
+                    rng = new Rng(0x816EFB5Du + tick * 0x7461CA0Du + tile.x * 0x66F38F0Bu + tile.y * 0x568DAAA9u);
                 }
 
                 int2 pos = new int2(rng.NextInt(RES), rng.NextInt(RES));
@@ -160,7 +193,7 @@ namespace WavesBurstF32 {
                 float amplitude = rng.NextFloat(-0.5f, 0.5f);
                 float radiusScale = math.PI * 2f / (float)radius;
 
-                const int impulsePeriod = 16;
+                const int impulsePeriod = 72;
                 if (tick == 0 || rng.NextInt(impulsePeriod) == 0) {
                     for (int y = -radius; y <= radius; y++) {
                         for (int x = -radius; x <= radius; x++) {
@@ -249,37 +282,6 @@ namespace WavesBurstF32 {
                 const float rPlusOne = R + 1f;
                 const float rSqrx2 = rSqr * 2f;
 
-                // Todo: hoist the inner-loop if-statements into separate loops or jobs
-
-                // for (int i = 0; i < count; i++) {
-                //     var coord = Coord(startIndex + i);
-                //     var x = coord.x;
-                //     var y = coord.y;
-                //     int edgeIdx = Idx(x, y);
-
-                //     int neighborIdx = -1;
-                //     if (x == 0) {
-                //         neighborIdx = Morton.Right(edgeIdx);
-                //     }
-                //     if (x >= RES - 1) {
-                //         neighborIdx = Morton.Left(edgeIdx);
-                //     }
-                //     if (y == 0) {
-                //         neighborIdx = Morton.Up(edgeIdx);
-                //     }
-                //     if (y >= RES - 1) {
-                //         neighborIdx = Morton.Down(edgeIdx);
-                //     }
-
-                //     if (neighborIdx != -1) {
-                //         float v = (
-                //             2f * curr[edgeIdx] + rMinusOne * prev_next[edgeIdx] +
-                //             rSqrx2 * (curr[neighborIdx] - curr[edgeIdx])
-                //         ) / rPlusOne;
-                //         prev_next[edgeIdx] = v;
-                //     }
-                // }
-
                 for (int i = startIndex; i < startIndex + count; i++) {
                     int2 c = new int2(1,1) + Coord(i, RES-2);
                     int idx = Idx(c.x, c.y);
@@ -301,8 +303,95 @@ namespace WavesBurstF32 {
                     v = math.clamp(v, -ceiling, ceiling);
 
                     next[idx] = v;
+                }
+            }
+        }
 
-                    // prev_next[i] = 1f;
+        /*
+
+        Edge code pattern:
+
+        float v = (
+            2f * curr[edgeIdx] + rMinusOne * prev_next[edgeIdx] +
+            rSqrx2 * (curr[neighborIdx] - curr[edgeIdx])
+        ) / rPlusOne;
+        prev_next[edgeIdx] = v;
+
+        */
+
+        [BurstCompile]
+        public struct PropagateLeftEdgeJobParallelBatch : IJobParallelForBatch {
+            [ReadOnly] public uint tick;
+
+            [ReadOnly] public NativeArray<float> curr_this;
+            [NativeDisableParallelForRestriction] public NativeArray<float> next_this;
+
+            [ReadOnly] public NativeArray<float> curr_that;
+            [NativeDisableParallelForRestriction] public NativeArray<float> next_that;
+
+            // Todo: also needs top and bottom for corner pixels...
+
+            public void Execute(int startIndex, int count) {
+                // Todo: supply these constants in a struct, as part of Octave
+                const float scaleFactor = 1f; // double or tripple per octave
+                const float dcd = 0.15f * scaleFactor;
+                const float dt = 0.0175f;
+                const float C = 0.9f;
+                const float R = C * dt / dcd;
+                const float rSqr = R * R; // optimization
+
+                const float rMinusOne = R - 1f;
+                const float rPlusOne = R + 1f;
+                const float rSqrx2 = rSqr * 2f;
+
+                for (int i = 1; i < RES-1; i++) {
+                    int2 cThis = new int2(0    , i);
+                    int2 cThat = new int2(RES-1, i);
+                    int thisIdx = Idx(cThis);
+                    int thatIdx = Idx(cThat);
+
+                    float spatial = rSqr * (
+                        curr_that[Idx(RES - 1, i + 0)] +
+                        curr_this[Idx(1, i + 0)] +
+                        curr_this[Idx(0, i - 1)] +
+                        curr_this[Idx(0, i + 1)] -
+                        curr_this[thisIdx] * 4
+                    );
+
+                    float temporal = 2 * curr_this[thisIdx] - next_this[thisIdx];
+
+                    float v = spatial + temporal;
+
+                    // Symmetric clamping as a safeguard
+                    const float ceiling = 1f;
+                    v = math.clamp(v, -ceiling, ceiling);
+
+                    next_this[thisIdx] = v;
+                }
+
+                for (int i = 1; i < RES - 1; i++) {
+                    int2 cThis = new int2(0, i);
+                    int2 cThat = new int2(RES - 1, i);
+                    int thisIdx = Idx(cThis);
+                    int thatIdx = Idx(cThat);
+
+                    float spatial = rSqr * (
+                        curr_this[Idx(0, i + 0)] +
+                        curr_that[Idx(RES - 1, i + 0)] +
+                        curr_that[Idx(RES - 1, i - 1)] +
+                        curr_that[Idx(RES - 1, i + 1)] -
+                        curr_that[thatIdx] * 4
+                    );
+
+                    float temporal = 2 * curr_that[thatIdx] - next_that[thatIdx];
+
+                    float v = spatial + temporal;
+
+                    // Symmetric clamping as a safeguard
+                    const float ceiling = 1f;
+                    v = math.clamp(v, -ceiling, ceiling);
+
+                    next_that[thatIdx] = v;
                 }
             }
         }
@@ -340,6 +429,11 @@ namespace WavesBurstF32 {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int Idx(int x, int y) {
             return y * RES + x;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static int Idx(int2 v) {
+            return v.y * RES + v.x;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
