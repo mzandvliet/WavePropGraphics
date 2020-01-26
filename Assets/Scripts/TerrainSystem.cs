@@ -434,54 +434,6 @@ public class TerrainSystem : MonoBehaviour {
                 0.5f + normal.y * 0.5f);
         }
     }
-
-    private static void GenerateTileHeights(NativeSlice<byte2> heights, NativeSlice<float2> normals, int numVerts, HeightSampler sampler, Vector3 position, float scale) {
-        /*
-         Todo: These sampling step sizes are off somehow, at least for normals
-         I'm guessing it's my silly use of non-power-of-two textures, so let's
-         fix that off-by-one thing everywhere.
-         */
-        float stepSize = scale / (float)(numVerts-1);
-        float stepSizeNormals = scale / (float)(numVerts-1);
-
-        /* Todo: can optimize normal generation by first sampling all heights, then using those to generate normals.
-         * Only need procedural samples at edges. */
-
-        float delta = 0.001f * scale;
-
-        for (int z = 0; z < numVerts; z++) {
-            for (int x = 0; x < numVerts; x++) {
-                int idx = z * numVerts + x;
-
-                float xPos = position.x + x * stepSize;
-                float zPos = position.z + z * stepSize;
-
-                float height = sampler.Sample(xPos, zPos);
-                
-                heights[idx] = new byte2(
-                    (byte)(Mathf.RoundToInt(height * 65535f) >> 8),
-                    (byte)(Mathf.RoundToInt(height * 65535f))
-                );
-
-                xPos = position.x + x * stepSizeNormals;
-                zPos = position.z + z * stepSizeNormals;
-
-                float heightL = sampler.Sample(xPos + delta, zPos);
-                float heightR = sampler.Sample(xPos - delta, zPos);
-                float heightB = sampler.Sample(xPos, zPos - delta);
-                float heightT = sampler.Sample(xPos, zPos + delta);
-
-                Vector3 lr = new Vector3(delta * 2f, (heightR - heightL) * sampler.HeightScale, 0f);
-                Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, delta * 2f);
-                Vector3 normal = Vector3.Cross(bt, lr).normalized;
-
-                // Note: normal z-component is recalculated on the gpu, which saves transfer memory
-                normals[idx] = new float2(
-                    0.5f + normal.x * 0.5f,
-                    0.5f + normal.y * 0.5f);
-            }
-        }
-    }
 }
 
 public interface IHeightSampler {

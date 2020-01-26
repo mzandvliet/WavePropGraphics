@@ -91,7 +91,7 @@ public class TerrainTile : MonoBehaviour {
         _heightMap.wrapMode = TextureWrapMode.Clamp;
         _normalMap.wrapMode = TextureWrapMode.Clamp;
         _heightMap.filterMode = FilterMode.Point;
-        _normalMap.filterMode = FilterMode.Trilinear;
+        _normalMap.filterMode = FilterMode.Bilinear;
         _normalMap.anisoLevel = 4;
 
         _meshRenderer.material.SetTexture("_HeightTex", _heightMap);
