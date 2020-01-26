@@ -14,6 +14,22 @@ which is a bit of a pain.
 
 using System.Runtime.CompilerServices;
 
+public struct MortonCode {
+    public uint v;
+
+    public MortonCode(uint v) {
+        this.v = v;
+    }
+
+    public static explicit operator MortonCode(uint v) {
+        return new MortonCode(v);
+    }
+
+    public static explicit operator uint(MortonCode c) {
+        return c.v;
+    }
+}
+
 public static class Morton {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]    
     public static int SeparateBy1(int x) {
@@ -31,9 +47,8 @@ public static class Morton {
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static int Code2dTree(int x, int y, int d) {
-        int depthOffset = 0; // todo: calculate as sum-of-powers-of-4
-        return depthOffset + Code2d(x, y);
+    public static int Code2dTree(int x, int y, int depth, int b) {
+        return b << (depth << 2) | Code2d(x, y);
     }
 
 

@@ -74,8 +74,9 @@ public class TerrainSystem : MonoBehaviour {
     private NativeStack<int> _tileIndexPool;
     private NativeHashMap<TreeNode, int> _tileMap;
 
-    private Tree _currVisibility;
-    private Tree _lastVisibility;
+    private Tree _currVisTree;
+    private Tree _lastVisTree;
+    private NativeList<TreeNode> _currVisible;
     private NativeList<TreeNode> _toLoad;
     private NativeList<TreeNode> _toUnload;
 
@@ -85,15 +86,6 @@ public class TerrainSystem : MonoBehaviour {
         _lodDistances = new NativeArray<float>(_numLods, Allocator.Persistent);
         QuadTree.GenerateLodDistances(_lodDistances, _lodZeroRange);
 
-        var testList = new NativeList<TreeNode>(128, Allocator.Persistent);
-        Debug.LogFormat("test list length: {0}, capacity: {1}", testList.Length, testList.Capacity);
-        for (int i = 0; i < 92; i++) {
-            testList.Add(new TreeNode(new Bounds(), 1));
-        }
-        testList.Resize(64, NativeArrayOptions.UninitializedMemory);
-        Debug.LogFormat("test list length: {0}, capacity: {1}", testList.Length, testList.Capacity);
-        testList.Dispose();
-
         _heightSampler = new HeightSampler(_heightScale);
 
         int maxNodes = mathi.SumPowersOfFour(_numLods);
@@ -101,8 +93,11 @@ public class TerrainSystem : MonoBehaviour {
         var bMin = new int3(-_lodZeroScale / 2, 0, -_lodZeroScale / 2);
         var lodZeroScale = new int3(_lodZeroScale, _heightScale, _lodZeroScale);
 
-        _currVisibility = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
-        _lastVisibility = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
+        _currVisTree = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
+        _lastVisTree = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
+
+        _currVisible = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
+
         _toLoad = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
         _toUnload = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
 
@@ -117,8 +112,11 @@ public class TerrainSystem : MonoBehaviour {
     private void OnDestroy() {
         _lodDistances.Dispose();
 
-        _currVisibility.Dispose();
-        _lastVisibility.Dispose();
+        _currVisTree.Dispose();
+        _lastVisTree.Dispose();
+
+        _currVisible.Dispose();
+
         _toLoad.Dispose();
         _toUnload.Dispose();
 
@@ -173,32 +171,59 @@ public class TerrainSystem : MonoBehaviour {
         var bMin = new int3(-_lodZeroScale / 2, 0, -_lodZeroScale / 2);
         var lodZeroScale = new int3(_lodZeroScale, _heightScale, _lodZeroScale);
 
-        _currVisibility.Clear(new Bounds(bMin, lodZeroScale));
+        _currVisTree.Clear(new Bounds(bMin, lodZeroScale));
         
         var expandTreeJob = new ExpandQuadTreeJob() {
             camInfo = _camInfo,
             lodDistances = _lodDistances,
-            tree = _currVisibility,
+            tree = _currVisTree,
+            visibleSet = _currVisible
         };
 
         _lodJobHandle = expandTreeJob.Schedule();
 
-        var unloadDiffJob = new DiffQuadTreesJob() {
-            a = _currVisibility.Nodes,
-            b = _lastVisibility.Nodes,
-            diff = _toUnload
-        };
+        _lodJobHandle.Complete();
 
-        var loadDiffJob = new DiffQuadTreesJob() {
-            a = _lastVisibility.Nodes,
-            b = _currVisibility.Nodes,
-            diff = _toLoad
-        };
+        // var currNodes = _currVisibility.Nodes.GetValueArray(Allocator.TempJob);
+        // var lastNodes = _lastVisibility.Nodes.GetValueArray(Allocator.TempJob);
 
-        _lodJobHandle = JobHandle.CombineDependencies(
-            unloadDiffJob.Schedule(),
-            loadDiffJob.Schedule()
-        );
+        // var unloadDiffJob = new DiffQuadTreesJob() {
+        //     a = lastNodes,
+        //     b = currNodes,
+        //     diff = _toUnload
+        // };
+
+        // var loadDiffJob = new DiffQuadTreesJob() {
+        //     a = currNodes,
+        //     b = lastNodes,
+        //     diff = _toLoad
+        // };
+
+        var loadedNodes = _tileMap.GetKeyArray(Allocator.TempJob);
+
+        _toUnload.Clear();
+        for (int i = 0; i < loadedNodes.Length; i++) {
+            if (!_currVisible.Contains(loadedNodes[i])) {
+                _toUnload.Add(loadedNodes[i]);
+            }
+        }
+
+        _toLoad.Clear();
+        for (int i = 0; i < _currVisible.Length; i++) {
+            if (!loadedNodes.Contains(_currVisible[i])) {
+                _toLoad.Add(_currVisible[i]);
+            }
+        }
+
+        // _lodJobHandle = JobHandle.CombineDependencies(
+        //     unloadDiffJob.Schedule(_lodJobHandle),
+        //     loadDiffJob.Schedule(_lodJobHandle)
+        // );
+        // _lodJobHandle.Complete();
+
+        var temp = _currVisTree;
+        _currVisTree = _lastVisTree;
+        _lastVisTree = temp;
     }
 
     private void LateUpdate() {
@@ -220,7 +245,7 @@ public class TerrainSystem : MonoBehaviour {
             return;
         }
 
-        DrawTree(_currVisibility);
+        DrawTree(_currVisTree);
     }
 
     private void DrawTree(Tree tree) {
@@ -241,7 +266,7 @@ public class TerrainSystem : MonoBehaviour {
         }
     }
 
-    private void Unload(NativeList<TreeNode> toUnload) {
+    private void Unload(NativeArray<TreeNode> toUnload) {
         for (int i = 0; i < toUnload.Length; i++) {
             TreeNode node = toUnload[i];
 
@@ -250,7 +275,7 @@ public class TerrainSystem : MonoBehaviour {
                 continue;
             }
 
-            // Debug.Log(string.Format("Unloading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
+            Debug.Log(string.Format("Unloading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
             int idx = _tileMap[node];
             var mesh = _tiles[idx];
@@ -264,7 +289,7 @@ public class TerrainSystem : MonoBehaviour {
     /* Todo: Optimize
      * - Run as Burst Job
      */
-    private void Load(NativeList<TreeNode> toLoad) {
+    private void Load(NativeArray<TreeNode> toLoad) {
         int numVerts = _tileResolution + 1;
 
         var streamHandles = new NativeArray<JobHandle>(toLoad.Length, Allocator.Temp, NativeArrayOptions.ClearMemory);
@@ -272,7 +297,7 @@ public class TerrainSystem : MonoBehaviour {
         for (int i = 0; i < toLoad.Length; i++) {
             var node = toLoad[i];
 
-            // Debug.Log(string.Format("Loading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
+            Debug.Log(string.Format("Loading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
             const float lMin = 2.1f, lMax = 2.9f;
             var lerpRanges = new Vector4(_lodDistances[node.depth] * lMin, _lodDistances[node.depth] * lMax);
@@ -352,6 +377,17 @@ public class TerrainSystem : MonoBehaviour {
 
 	    return tile;
 	}
+
+    [BurstCompile]
+    public struct GetValuesJob : IJob {
+        [ReadOnly] public NativeHashMap<int, TreeNode> map;
+        [ReadOnly] public Allocator allocator;
+        [WriteOnly] public NativeArray<TreeNode> values;
+
+        public void Execute() {
+            values = map.GetValueArray(allocator);
+        }
+    }
 
     [BurstCompile]
     public struct StreamHeightDataJob : IJobParallelFor {

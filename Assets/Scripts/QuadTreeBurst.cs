@@ -22,17 +22,21 @@ public struct ExpandQuadTreeJob : IJob {
     [ReadOnly] public NativeSlice<float> lodDistances;
 
     public Tree tree;
+    public NativeList<TreeNode> visibleSet;
 
     public void Execute() {
-        var stack = new NativeStack<int>(mathi.SumPowersOfFour(tree.MaxDepth), Allocator.Temp);
+        visibleSet.Clear();
+
+        var stack = new NativeStack<int2>(mathi.SumPowersOfFour(tree.MaxDepth), Allocator.Temp);
         stack.Push(0);
 
         while (stack.Count > 0) {
-            int mortonIdx = stack.Pop();
+            int2 mortonIdx = stack.Pop();
             var node = tree[mortonIdx];
 
             // If we're at the deepest lod level, no need to expand further
             if (node.depth == tree.MaxDepth - 1) {
+                visibleSet.Add(node);
                 continue;
             }
 
@@ -40,35 +44,19 @@ public struct ExpandQuadTreeJob : IJob {
             if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[node.depth])) {
                 node = tree.Open(mortonIdx);
 
-                int childBase = mortonIdx << 2;
+                int childBase = mortonIdx.x << 2;
                 for (int i = 0; i < 4; i++) {
-                    stack.Push(childBase & i);
+                    stack.Push(new int2(childBase | i, node.depth+1));
                 }
 
                 continue;
             }
+
+            visibleSet.Add(node);
         }
 
         stack.Dispose();
     }
-
-    // private void MaybeLoadNode(int nodeIdx) {
-    //     var node = tree[nodeIdx];
-    //     if (!node.hasChildren) {
-    //         node.hasChildren = true;
-    //         _toLoad.Add(node);
-    //         tree[nodeIdx] = node;
-    //     }
-    // }
-
-    // private void MaybeUnloadNode(int nodeIdx) {
-    //     var node = tree[nodeIdx];
-    //     if (node.hasChildren) {
-    //         node.hasChildren = false;
-    //         _toUnload.Add(node);
-    //         tree[nodeIdx] = node;
-    //     }
-    // }
 }
 
 [BurstCompile]
@@ -82,7 +70,7 @@ public struct DiffQuadTreesJob : IJob {
         diff.Clear();
 
         for (int i = 0; i < a.Length; i++) {
-            if (!b.Contains(a[i])) {
+            if (!a[i].hasChildren && !b.Contains(a[i])) {
                 diff.Add(a[i]);
             }
         }
@@ -116,7 +104,7 @@ public static class TreeUtil {
 
 // Todo: z-order curve addressing structure will simplify all of this structure
 public struct Tree : System.IDisposable {
-    private NativeArray<TreeNode> _nodes;
+    private NativeHashMap<int2, TreeNode> _nodes;
     private HeightSampler _heights;
 
     public int MaxDepth {
@@ -128,17 +116,17 @@ public struct Tree : System.IDisposable {
         get => _nodes.Length;
     }
 
-    public NativeArray<TreeNode> Nodes{
+    public NativeHashMap<int2, TreeNode> Nodes{
         get => _nodes;
     }
 
     public Tree(Bounds bounds, int maxLevels, HeightSampler heights, Allocator allocator) {
-        _nodes = new NativeArray<TreeNode>(mathi.SumPowersOfFour(maxLevels), allocator);
+        _nodes = new NativeHashMap<int2, TreeNode>(mathi.SumPowersOfFour(maxLevels), allocator);
         MaxDepth = maxLevels;
         _heights = heights;
 
         var root = new TreeNode(bounds, 0);
-        _nodes[0] = root;
+        _nodes.TryAdd(0, root);
     }
 
     public void Clear(Bounds bounds) {
@@ -150,7 +138,7 @@ public struct Tree : System.IDisposable {
         _nodes.Dispose();
     }
 
-    public TreeNode Open(int mortonIdx) {
+    public TreeNode Open(int2 mortonIdx) {
         var node = _nodes[mortonIdx];
         var halfSize = node.bounds.size / 2;
 
@@ -164,17 +152,22 @@ public struct Tree : System.IDisposable {
         tr = FitHeightSamples(tr, _heights);
         br = FitHeightSamples(br, _heights);
 
-        int childBase = (mortonIdx << 2);
-        int childDepth = node.depth+1;
+        int childBase = mortonIdx.x << 2;
+        int childDepth = node.depth + 1;
 
-        int blIdx = childBase & 0b00;
-        int brIdx = childBase & 0b01;
-        int tlIdx = childBase & 0b10;
-        int trIdx = childBase & 0b11;
-        _nodes[blIdx] = new TreeNode(bl, childDepth);
-        _nodes[brIdx] = new TreeNode(br, childDepth);
-        _nodes[tlIdx] = new TreeNode(tl, childDepth);
-        _nodes[trIdx] = new TreeNode(tr, childDepth);
+        int2 blIdx = new int2(childBase | 0b00, childDepth);
+        int2 brIdx = new int2(childBase | 0b01, childDepth);
+        int2 tlIdx = new int2(childBase | 0b10, childDepth);
+        int2 trIdx = new int2(childBase | 0b11, childDepth);
+        // _nodes[blIdx] = new TreeNode(bl, childDepth);
+        // _nodes[brIdx] = new TreeNode(br, childDepth);
+        // _nodes[tlIdx] = new TreeNode(tl, childDepth);
+        // _nodes[trIdx] = new TreeNode(tr, childDepth);
+
+        _nodes.TryAdd(blIdx, new TreeNode(bl, childDepth));
+        _nodes.TryAdd(brIdx, new TreeNode(br, childDepth));
+        _nodes.TryAdd(tlIdx, new TreeNode(tl, childDepth));
+        _nodes.TryAdd(trIdx, new TreeNode(tr, childDepth));
 
         node.hasChildren = true;
         _nodes[mortonIdx] = node;
@@ -182,7 +175,7 @@ public struct Tree : System.IDisposable {
         return node; // Convenience, since caller's old copy of Node data will be invalidated
     }
 
-    public void Close(int idx) {
+    public void Close(int2 idx) {
 
     }
 
@@ -219,7 +212,7 @@ public struct Tree : System.IDisposable {
 
     /* Important: this returns by copy, not by reference. Don't forget to
     explicitly write back new values if you change them! */
-    public TreeNode this[int i] {
+    public TreeNode this[int2 i] {
         get => _nodes[i];
         set => _nodes[i] = value;
     }
