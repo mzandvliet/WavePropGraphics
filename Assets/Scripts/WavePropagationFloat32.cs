@@ -94,6 +94,14 @@ namespace WavesBurstF32 {
         private void Update() {
             var handles = new NativeList<JobHandle>(2, Allocator.Temp);
 
+            var scaleFactor = 1f;
+            var simConfig = new SimConfig(
+                scaleFactor,            // double or tripple per octave
+                0.15f * scaleFactor,    // dcd
+                0.0175f,                // dt
+                0.9f                    // C
+            );
+
             buffIdx0 = (buffIdx0 + 1) % 2;
             buffIdx1 = (buffIdx0 + 1) % 2;
 
@@ -113,6 +121,7 @@ namespace WavesBurstF32 {
                 var simulateJob = new PropagateJobParallelBatch
                 {
                     tick = _tick,
+                    config = simConfig,
                     curr = octave.buffer.GetBuffer(buffIdx0),
                     next = octave.buffer.GetBuffer(buffIdx1),
                 };
@@ -130,6 +139,7 @@ namespace WavesBurstF32 {
 
             var edgeSimJob = new PropagateEdgeHorizontalJob() {
                 tick = _tick,
+                config = simConfig,
                 l_curr = _tiles[0].buffer.GetBuffer(buffIdx0),
                 r_curr = _tiles[1].buffer.GetBuffer(buffIdx0),
                 l_next = _tiles[0].buffer.GetBuffer(buffIdx1),
@@ -168,9 +178,10 @@ namespace WavesBurstF32 {
         private void OnGUI() {
             const float scale = 8f;
             float size = RES * scale;
+            float sizeMinOne = (RES-1) * scale;
 
             for (int i = 0; i < NUM_TILES; i++) {
-                GUI.DrawTexture(new Rect(i * size, 0f, size, size), _screenTex[i], ScaleMode.ScaleToFit);
+                GUI.DrawTexture(new Rect(i * sizeMinOne, 0f, size, size), _screenTex[i], ScaleMode.ScaleToFit);
             }
         }
 
@@ -198,7 +209,7 @@ namespace WavesBurstF32 {
                 float amplitude = rng.NextFloat(-0.5f, 0.5f);
                 float radiusScale = math.PI * 2f / (float)radius;
 
-                const int impulsePeriod = 72;
+                const int impulsePeriod = 72 * 4;
                 if (tick == 0 || rng.NextInt(impulsePeriod) == 0) {
                     for (int y = -radius; y <= radius; y++) {
                         for (int x = -radius; x <= radius; x++) {
@@ -267,31 +278,49 @@ namespace WavesBurstF32 {
         ) / 1.013072111;
         */
 
+        public struct SimConfig {
+            public readonly float scaleFactor; // double or tripple per octave
+            public readonly float dcd;
+            public readonly float dt;
+            public readonly float C;
+            public readonly float R;
+
+            // Cached derived values, todo: calculate in constructor
+            public readonly float rSqr;
+            public readonly float rMinusOne;
+            public readonly float rPlusOne;
+            public readonly float rSqrx2;
+
+            public SimConfig(float scaleFactor, float dcd, float dt, float C) {
+                this.scaleFactor = scaleFactor;
+                this.dcd = dcd;
+                this.dt = dt;
+                this.C = C;
+
+                R = C * dt / dcd;
+                rSqr = R * R;
+                rMinusOne = R - 1f;
+                rPlusOne = R + 1f;
+                rSqrx2 = rSqr * 2f;
+            }
+        }
+
         [BurstCompile]
         public struct PropagateJobParallelBatch : IJobParallelForBatch {
             [ReadOnly] public uint tick;
+            [ReadOnly] public SimConfig config;
+
             [ReadOnly] public NativeArray<float> curr;
             [NativeDisableParallelForRestriction] public NativeArray<float> next;
             
 
             public void Execute(int startIndex, int count) {
-                // Todo: supply these constants in a struct, as part of Octave
-                const float scaleFactor = 1f; // double or tripple per octave
-                const float dcd = 0.15f * scaleFactor;
-                const float dt = 0.0175f;
-                const float C = 0.9f;
-                const float R = C * dt / dcd;
-                const float rSqr = R * R; // optimization
-
-                const float rMinusOne = R - 1f;
-                const float rPlusOne = R + 1f;
-                const float rSqrx2 = rSqr * 2f;
 
                 for (int i = startIndex; i < startIndex + count; i++) {
                     int2 c = new int2(1,1) + Coord(i, RES-2);
                     int idx = Idx(c.x, c.y);
 
-                    float spatial = rSqr * (
+                    float spatial = config.rSqr * (
                         curr[Idx(c.x - 1, c.y + 0)] +
                         curr[Idx(c.x + 1, c.y + 0)] +
                         curr[Idx(c.x + 0, c.y - 1)] +
@@ -314,7 +343,7 @@ namespace WavesBurstF32 {
 
         /*
 
-        Edge code pattern:
+        Todo: Continuation or Transient Edge code pattern
 
         float v = (
             2f * curr[edgeIdx] + rMinusOne * prev_next[edgeIdx] +
@@ -328,6 +357,8 @@ namespace WavesBurstF32 {
         public struct PropagateEdgeHorizontalJob : IJobParallelForBatch {
             [ReadOnly] public uint tick;
 
+            [ReadOnly] public SimConfig config;
+
             [ReadOnly] public NativeArray<float> l_curr;
             [NativeDisableParallelForRestriction] public NativeArray<float> l_next;
 
@@ -335,38 +366,32 @@ namespace WavesBurstF32 {
             [NativeDisableParallelForRestriction] public NativeArray<float> r_next;
 
             /*
-            Todo: 
-            
-            - Problem: when we start, we have both edges with missing information
-            and the one that goes first is shit out of luck!
+            Implementation note:
 
-            We can't actually write the algorithm to be symmetric.
+            The idea here is that a line of pixels at the edge of a tile is the same
+            data as the edge on the neighboring tile.
 
-            Instead, we should make the tiles share their edge pixels, have them
-            conceptually overlap?
+            Why? Joining two tiles with two unfilled edges of data is not possible,
+            as both then see their neighbors edge data as uninitialized.
 
+            This will work out well enough, I think, as the rendering system also
+            works with odd-numbered resolutions for meshes and textures.
+
+            Todo:
             - Also needs top and bottom for corner pixels...
             */
 
             public void Execute(int startIndex, int count) {
-                // Todo: supply these constants in a struct, as part of Octave
-                const float scaleFactor = 1f; // double or tripple per octave
-                const float dcd = 0.15f * scaleFactor;
-                const float dt = 0.0175f;
-                const float C = 0.9f;
-                const float R = C * dt / dcd;
-                const float rSqr = R * R; // optimization
-
                 // Left tile
                 for (int i = 1; i < RES - 1; i++) {
-                    int r_idx = Idx(0       , i);
+                    int r_idx = Idx(1       , i);
                     int l_idx = Idx(RES - 1 , i);
 
-                    float spatial = rSqr * (
-                        r_curr[Idx(0      , i + 0)] +
-                        l_curr[Idx(RES - 1, i + 0)] +
-                        l_curr[Idx(RES - 1, i - 1)] +
-                        l_curr[Idx(RES - 1, i + 1)] -
+                    float spatial = config.rSqr * (
+                        r_curr[Idx(1      , i + 0)] +
+                        l_curr[Idx(RES - 2, i + 0)] +
+                        l_curr[Idx(RES - 2, i - 1)] +
+                        l_curr[Idx(RES - 2, i + 1)] -
                         l_curr[l_idx] * 4
                     );
 
@@ -379,30 +404,7 @@ namespace WavesBurstF32 {
                     v = math.clamp(v, -ceiling, ceiling);
 
                     l_next[l_idx] = v;
-                }
-
-                // Right tile
-                for (int i = 1; i < RES - 1; i++) {
-                    int r_idx = Idx(0       , i);
-                    int l_idx = Idx(RES - 1 , i);
-
-                    float spatial = rSqr * (
-                        l_curr[Idx(RES - 1, i + 0)] +
-                        r_curr[Idx(1, i + 0)] +
-                        r_curr[Idx(0, i - 1)] +
-                        r_curr[Idx(0, i + 1)] -
-                        r_curr[r_idx] * 4
-                    );
-
-                    float temporal = 2 * r_curr[r_idx] - r_next[r_idx];
-
-                    float v = spatial + temporal;
-
-                    // Symmetric clamping as a safeguard
-                    const float ceiling = 1f;
-                    v = math.clamp(v, -ceiling, ceiling);
-
-                    r_next[r_idx] = v;
+                    r_next[Idx(0, i)] = v;
                 }
             }
         }
@@ -426,8 +428,8 @@ namespace WavesBurstF32 {
                 float sample = buf[i];
 
                 var scaled = (sample * 256f);
-                var pos = math.clamp(scaled, 0, 256f);
-                var neg = math.clamp(-scaled, 0, 256f);
+                var pos = math.clamp(scaled, 0, 255f);
+                var neg = math.clamp(-scaled, 0, 255f);
 
                 var pressureColor = new byte2(
                     (byte)neg,
