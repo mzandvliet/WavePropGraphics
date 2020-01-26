@@ -109,7 +109,7 @@ namespace WavesBurstF32 {
                 {
                     tick = _tick,
                     curr = octave.buffer.GetBuffer(buffIdx0),
-                    prev_next = octave.buffer.GetBuffer(buffIdx1),
+                    next = octave.buffer.GetBuffer(buffIdx1),
                 };
                 simHandle = simulateJob.ScheduleBatch((RES-2) * (RES-2), RES-2, simHandle);
 
@@ -233,7 +233,7 @@ namespace WavesBurstF32 {
         public struct PropagateJobParallelBatch : IJobParallelForBatch {
             [ReadOnly] public uint tick;
             [ReadOnly] public NativeArray<float> curr;
-            [NativeDisableParallelForRestriction] public NativeArray<float> prev_next;
+            [NativeDisableParallelForRestriction] public NativeArray<float> next;
             
 
             public void Execute(int startIndex, int count) {
@@ -292,7 +292,7 @@ namespace WavesBurstF32 {
                         curr[idx] * 4
                     );
 
-                    float temporal = 2 * curr[idx] - prev_next[idx];
+                    float temporal = 2 * curr[idx] - next[idx];
 
                     float v = spatial + temporal;
 
@@ -300,7 +300,7 @@ namespace WavesBurstF32 {
                     const float ceiling = 1f;
                     v = math.clamp(v, -ceiling, ceiling);
 
-                    prev_next[idx] = v;
+                    next[idx] = v;
 
                     // prev_next[i] = 1f;
                 }

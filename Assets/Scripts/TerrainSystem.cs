@@ -8,32 +8,14 @@ using UnityEngine;
 using UnityEngine.Profiling;
 
 /*
-Make a pool of X^2 resolution vert meshes
-Walk quadtree tree each frame to find the payloads that should be streamed/generated
-    LOD level is based on 3D distance to the camera
-Get a mesh from the pool and stream data into it
-
 Todo:
-
-Improve normal map popping
 
 Octaved height texture update from interactive wave simulation
 
-Burstify all the things
-Rewrite Quadtree logic. Flat, data-driven, burst-friendly
-
-Maybe use compute buffers to send heigh data to GPU? We're not using
-hardware-interpolators for reading the height textures at the moment,
-since we're using text2dlod, and bilinearly sampling in software
+Improve normal map popping
 
 Single mesh prototype, use material property blocks to assign textures and transforms
 Shadow pass
-
-Increase distance, draw and detail scales
-
-Track accurate tile bounding box information for LOD selection
-
-Figure out how to disable the 4 quadrants of a tile without cpu overhead
 
 Separate culling passes to find visual and shadow caster tiles, use pass tags to render them differently
     - https://gist.github.com/pigeon6/4237385
@@ -46,7 +28,6 @@ New Texture2D api features to try:
 - LoadRawTextureData(NativeArra<T> data), https://docs.unity3d.com/ScriptReference/Texture2D.LoadRawTextureData.html
 - GetRawTextureData(), returns a reference which is even better, https://docs.unity3d.com/ScriptReference/Texture2D.GetRawTextureData.html
 - Compress(), compresses into DXT1, or DXT5 if alpha channel
-
 */
 
 public struct byte2 {
