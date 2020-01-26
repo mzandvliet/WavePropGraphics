@@ -23,124 +23,71 @@ public struct ExpandQuadTreeJob : IJob {
 
     public Tree tree;
 
-    public NativeList<TreeNode> _toUnload;
-    public NativeList<TreeNode> _toLoad;
-
     public void Execute() {
         var stack = new NativeStack<int>(mathi.SumPowersOfFour(tree.MaxDepth), Allocator.Temp);
         stack.Push(0);
 
         while (stack.Count > 0) {
-            int nodeIdx = stack.Pop();
-            var node = tree[nodeIdx];
+            int mortonIdx = stack.Pop();
+            var node = tree[mortonIdx];
 
             // If we're at the deepest lod level, no need to expand further
             if (node.depth == tree.MaxDepth - 1) {
-                MaybeLoadNode(nodeIdx);
                 continue;
             }
 
             // If not, we should create children if we're in LOD range
             if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[node.depth])) {
-                if (node.IsLeaf) {
-                    node = tree.Expand(nodeIdx);
-                    tree[nodeIdx] = node;
-                }
+                node = tree.Open(mortonIdx);
 
+                int childBase = mortonIdx << 2;
                 for (int i = 0; i < 4; i++) {
-                    stack.Push(node[i]);
+                    stack.Push(childBase & i);
                 }
 
-                MaybeUnloadNode(nodeIdx);
                 continue;
-            } else if (!node.IsLeaf) {
-                tree.Contract(nodeIdx, _toUnload);
             }
-
-            MaybeLoadNode(nodeIdx);
         }
 
         stack.Dispose();
     }
 
-    private void MaybeLoadNode(int nodeIdx) {
-        var node = tree[nodeIdx];
-        if (!node.isLoaded) {
-            node.isLoaded = true;
-            _toLoad.Add(node);
-            tree[nodeIdx] = node;
-        }
-    }
+    // private void MaybeLoadNode(int nodeIdx) {
+    //     var node = tree[nodeIdx];
+    //     if (!node.hasChildren) {
+    //         node.hasChildren = true;
+    //         _toLoad.Add(node);
+    //         tree[nodeIdx] = node;
+    //     }
+    // }
 
-    private void MaybeUnloadNode(int nodeIdx) {
-        var node = tree[nodeIdx];
-        if (node.isLoaded) {
-            node.isLoaded = false;
-            _toUnload.Add(node);
-            tree[nodeIdx] = node;
-        }
-    }
+    // private void MaybeUnloadNode(int nodeIdx) {
+    //     var node = tree[nodeIdx];
+    //     if (node.hasChildren) {
+    //         node.hasChildren = false;
+    //         _toUnload.Add(node);
+    //         tree[nodeIdx] = node;
+    //     }
+    // }
 }
 
 [BurstCompile]
-public struct ExpandQuadTreeQueueLoadsJob : IJob {
-    [ReadOnly] public CameraInfo camInfo;
-    [ReadOnly] public NativeSlice<float> lodDistances;
+public struct DiffQuadTreesJob : IJob {
+    [ReadOnly] public NativeArray<TreeNode> a;
+    [ReadOnly] public NativeArray<TreeNode> b;
 
-    public Tree tree;
-    public NativeList<TreeNode> visibleSet;
+    public NativeList<TreeNode> diff;
 
     public void Execute() {
-        var stack = new NativeStack<int>(mathi.SumPowersOfFour(tree.MaxDepth), Allocator.Temp);
-        stack.Push(0);
+        diff.Clear();
 
-        while (stack.Count > 0) {
-            int nodeIdx = stack.Pop();
-            var node = tree[nodeIdx];
-
-            // If we're at the deepest lod level, no need to expand further, set visible
-            if (node.depth == tree.MaxDepth - 1) {
-                visibleSet.Add(node);
-                continue;
+        for (int i = 0; i < a.Length; i++) {
+            if (!b.Contains(a[i])) {
+                diff.Add(a[i]);
             }
-
-            // If not, we should create children if we're in LOD range
-            if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[node.depth]*1.33f)) {
-                node = tree.Expand(nodeIdx);
-                tree[nodeIdx] = node;
-
-                for (int i = 0; i < 4; i++) {
-                    stack.Push(node[i]);
-                }
-
-                continue;
-            }
-
-            // If we're not in need of further refinement, set visible
-            visibleSet.Add(node);
         }
-
-        stack.Dispose();
     }
 }
-
-// [BurstCompile]
-// public struct DiffQuadTreesJob : IJob {
-//     [ReadOnly] public NativeList<TreeNode> a;
-//     [ReadOnly] public NativeList<TreeNode> b;
-
-//     public NativeList<TreeNode> diff;
-
-//     public void Execute() {
-//         diff.Clear();
-
-//         for (int i = 0; i < a.Length; i++) {
-//             if (a[i].payload > -1 && !b.Contains(a[i])) {
-//                 diff.Add(a[i]);
-//             }
-//         }
-//     }
-// }
 
 public static class TreeUtil {
     public static bool Intersect(Bounds node, CameraInfo camInfo, float range) {
@@ -169,7 +116,7 @@ public static class TreeUtil {
 
 // Todo: z-order curve addressing structure will simplify all of this structure
 public struct Tree : System.IDisposable {
-    private NativeList<TreeNode> _nodes;
+    private NativeArray<TreeNode> _nodes;
     private HeightSampler _heights;
 
     public int MaxDepth {
@@ -181,35 +128,30 @@ public struct Tree : System.IDisposable {
         get => _nodes.Length;
     }
 
-    public NativeList<TreeNode> Nodes{
+    public NativeArray<TreeNode> Nodes{
         get => _nodes;
     }
 
     public Tree(Bounds bounds, int maxLevels, HeightSampler heights, Allocator allocator) {
-        _nodes = new NativeList<TreeNode>(mathi.SumPowersOfFour(maxLevels), allocator);
+        _nodes = new NativeArray<TreeNode>(mathi.SumPowersOfFour(maxLevels), allocator);
         MaxDepth = maxLevels;
         _heights = heights;
-        NewNode(bounds, 0);
+
+        var root = new TreeNode(bounds, 0);
+        _nodes[0] = root;
     }
 
     public void Clear(Bounds bounds) {
-        _nodes.Clear();
-        NewNode(bounds, 0);
+        var root = new TreeNode(bounds, 0);
+        _nodes[0] = root;
     }
 
     public void Dispose() {
         _nodes.Dispose();
     }
 
-    private int NewNode(Bounds bounds, int depth) {
-        int idx = _nodes.Length;
-        var node = new TreeNode(bounds, depth);
-        _nodes.Add(node);
-        return idx;
-    }
-
-    public TreeNode Expand(int idx) {
-        var node = _nodes[idx];
+    public TreeNode Open(int mortonIdx) {
+        var node = _nodes[mortonIdx];
         var halfSize = node.bounds.size / 2;
 
         var bl = new Bounds(node.bounds.position + new int3(0, 0, 0), halfSize);
@@ -222,46 +164,26 @@ public struct Tree : System.IDisposable {
         tr = FitHeightSamples(tr, _heights);
         br = FitHeightSamples(br, _heights);
 
-        node[0] = NewNode(bl, node.depth + 1);
-        node[1] = NewNode(tl, node.depth + 1);
-        node[2] = NewNode(tr, node.depth + 1);
-        node[3] = NewNode(br, node.depth + 1);
+        int childBase = (mortonIdx << 2);
+        int childDepth = node.depth+1;
 
-        _nodes[idx] = node;
+        int blIdx = childBase & 0b00;
+        int brIdx = childBase & 0b01;
+        int tlIdx = childBase & 0b10;
+        int trIdx = childBase & 0b11;
+        _nodes[blIdx] = new TreeNode(bl, childDepth);
+        _nodes[brIdx] = new TreeNode(br, childDepth);
+        _nodes[tlIdx] = new TreeNode(tl, childDepth);
+        _nodes[trIdx] = new TreeNode(tr, childDepth);
+
+        node.hasChildren = true;
+        _nodes[mortonIdx] = node;
 
         return node; // Convenience, since caller's old copy of Node data will be invalidated
     }
 
-    public void Contract(int idx, NativeList<TreeNode> toUnload) {
-        var stack = new NativeStack<int>(mathi.SumPowersOfFour(MaxDepth), Allocator.Temp);
-        stack.Push(idx);
+    public void Close(int idx) {
 
-        while (stack.Count > 0) {
-            int nodeIdx = stack.Pop();
-            var node = this[nodeIdx];
-
-            if (!node.IsLeaf) {
-                for (int i = 0; i < 4; i++) {
-                    stack.Push(node[i]);
-                }
-
-                // node[0] = -1;
-                // node[1] = -1;
-                // node[2] = -1;
-                // node[3] = -1;
-                // _nodes[idx] = node;
-            }
-
-            if (node.isLoaded) {
-                toUnload.Add(node);
-            }
-        }
-
-        stack.Items.Sort();
-
-        for (int i = stack.Items.Length-1; i <= 0; i++) {
-            // Todo: lol: no remove function, makes sense
-        }
     }
 
     private static Bounds FitHeightSamples(Bounds bounds, HeightSampler sampler) {
@@ -320,44 +242,12 @@ if we use Morton indexing there is no need for much of this structure
 public unsafe struct TreeNode : System.IEquatable<TreeNode> {
     public Bounds bounds;
     public int depth;
-    public bool isLoaded;
+    public bool hasChildren;
     
-    // embed fixed-size array directly in struct memory
-    private fixed int children[4];
-
-    public bool IsLeaf {
-        get {
-            bool leaf = true;
-            for (int i = 0; i < 4; i++) {
-                leaf &= this[i] == -1;
-            }
-            return leaf;
-        }
-    }
-
     public TreeNode(Bounds bounds, int depth) {
         this.bounds = bounds;
         this.depth = depth;
-        this.isLoaded = false;
-
-        fixed(int* p = children) {
-            for (int i = 0; i < 4; i++) {
-                p[i] = -1;
-            }
-        }
-    }
-
-    public unsafe int this[int idx] {
-        get {
-            fixed (int* p = children) {
-                return p[idx];
-            }
-        }
-        set {
-            fixed (int* p = children) {
-                p[idx] = value;
-            }
-        }
+        this.hasChildren = false;
     }
 
     public override bool Equals(System.Object obj) {

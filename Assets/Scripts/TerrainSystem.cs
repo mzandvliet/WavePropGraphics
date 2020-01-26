@@ -74,8 +74,8 @@ public class TerrainSystem : MonoBehaviour {
     private NativeStack<int> _tileIndexPool;
     private NativeHashMap<TreeNode, int> _tileMap;
 
-    private Tree _visibleTree;
-    private NativeList<TreeNode> _visibleSet;
+    private Tree _currVisibility;
+    private Tree _lastVisibility;
     private NativeList<TreeNode> _toLoad;
     private NativeList<TreeNode> _toUnload;
 
@@ -101,8 +101,8 @@ public class TerrainSystem : MonoBehaviour {
         var bMin = new int3(-_lodZeroScale / 2, 0, -_lodZeroScale / 2);
         var lodZeroScale = new int3(_lodZeroScale, _heightScale, _lodZeroScale);
 
-        _visibleTree = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
-        _visibleSet = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
+        _currVisibility = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
+        _lastVisibility = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
         _toLoad = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
         _toUnload = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
 
@@ -117,8 +117,8 @@ public class TerrainSystem : MonoBehaviour {
     private void OnDestroy() {
         _lodDistances.Dispose();
 
-        _visibleTree.Dispose();
-        _visibleSet.Dispose();
+        _currVisibility.Dispose();
+        _lastVisibility.Dispose();
         _toLoad.Dispose();
         _toUnload.Dispose();
 
@@ -173,28 +173,44 @@ public class TerrainSystem : MonoBehaviour {
         var bMin = new int3(-_lodZeroScale / 2, 0, -_lodZeroScale / 2);
         var lodZeroScale = new int3(_lodZeroScale, _heightScale, _lodZeroScale);
 
-        // _visibleTree.Clear(new Bounds(bMin, lodZeroScale));
-        // _visibleSet.Clear();
+        _currVisibility.Clear(new Bounds(bMin, lodZeroScale));
         
-        // var expandTreeJob = new ExpandQuadTreeQueueLoadsJob() {
-        //     camInfo = _camInfo,
-        //     lodDistances = _lodDistances,
-        //     tree = _visibleTree,
-        //     visibleSet = _visibleSet
-        // };
-        // _lodJobHandle = expandTreeJob.Schedule();
+        var expandTreeJob = new ExpandQuadTreeJob() {
+            camInfo = _camInfo,
+            lodDistances = _lodDistances,
+            tree = _currVisibility,
+        };
+
+        _lodJobHandle = expandTreeJob.Schedule();
+
+        var unloadDiffJob = new DiffQuadTreesJob() {
+            a = _currVisibility.Nodes,
+            b = _lastVisibility.Nodes,
+            diff = _toUnload
+        };
+
+        var loadDiffJob = new DiffQuadTreesJob() {
+            a = _lastVisibility.Nodes,
+            b = _currVisibility.Nodes,
+            diff = _toLoad
+        };
+
+        _lodJobHandle = JobHandle.CombineDependencies(
+            unloadDiffJob.Schedule(),
+            loadDiffJob.Schedule()
+        );
     }
 
     private void LateUpdate() {
         _lodJobHandle.Complete();
 
-        // Profiler.BeginSample("Unload");
-        // Unload(_toUnload);
-        // Profiler.EndSample();
+        Profiler.BeginSample("Unload");
+        Unload(_toUnload);
+        Profiler.EndSample();
 
-        // Profiler.BeginSample("Load");
-        // Load(_toLoad);
-        // Profiler.EndSample();
+        Profiler.BeginSample("Load");
+        Load(_toLoad);
+        Profiler.EndSample();
 
         _camInfo.Dispose();
     }
@@ -204,14 +220,14 @@ public class TerrainSystem : MonoBehaviour {
             return;
         }
 
-        DrawTree(_visibleTree);
+        DrawTree(_currVisibility);
     }
 
     private void DrawTree(Tree tree) {
         for (int i = 0; i < tree.Nodes.Length; i++) {
             var node = tree.Nodes[i];
 
-            if (!node.IsLeaf) {
+            if (node.hasChildren) {
                 continue;
             }
 
