@@ -41,7 +41,7 @@ public struct ExpandQuadTreeJob : IJob {
             }
 
             // If not, we should create children if we're in LOD range
-            if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[node.depth])) {
+            if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[node.depth] * 1.33f)) {
                 node = tree.Open(mortonIdx);
 
                 int childBase = mortonIdx.x << 2;
