@@ -419,8 +419,8 @@ public class TerrainSystem : MonoBehaviour {
             xPos = position.x + x * stepSizeNormals;
             zPos = position.z + z * stepSizeNormals;
 
-            float heightL = sampler.Sample(xPos + delta, zPos);
-            float heightR = sampler.Sample(xPos - delta, zPos);
+            float heightL = sampler.Sample(xPos - delta, zPos);
+            float heightR = sampler.Sample(xPos + delta, zPos);
             float heightB = sampler.Sample(xPos, zPos - delta);
             float heightT = sampler.Sample(xPos, zPos + delta);
 
