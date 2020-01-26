@@ -401,7 +401,7 @@ public class TerrainSystem : MonoBehaviour {
         public void Execute(int idx) {
             float stepSize = scale / (float)(numVerts - 1);
             float stepSizeNormals = scale / (float)(numVerts - 1);
-            float delta = 0.001f * scale;
+            float delta = stepSizeNormals * 0.1f;
 
             int x = idx % numVerts;
             int z = idx / numVerts;
