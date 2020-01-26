@@ -123,12 +123,17 @@ namespace WavesBurstF32 {
 
             JobHandle.CompleteAll(handles);
 
-            var edgeSimJob = new PropagateLeftEdgeJobParallelBatch() {
+            /* 
+            Todo: iterate over dual grid between the tiles
+            each of the verts can handle the same pattern?
+            */
+
+            var edgeSimJob = new PropagateEdgeHorizontalJob() {
                 tick = _tick,
-                curr_this = _tiles[1].buffer.GetBuffer(buffIdx0),
-                curr_that = _tiles[0].buffer.GetBuffer(buffIdx0),
-                next_this = _tiles[1].buffer.GetBuffer(buffIdx1),
-                next_that = _tiles[0].buffer.GetBuffer(buffIdx1),
+                l_curr = _tiles[0].buffer.GetBuffer(buffIdx0),
+                r_curr = _tiles[1].buffer.GetBuffer(buffIdx0),
+                l_next = _tiles[0].buffer.GetBuffer(buffIdx1),
+                r_next = _tiles[1].buffer.GetBuffer(buffIdx1),
             };
             var edgeHandle = edgeSimJob.ScheduleBatch(RES, RES);
             edgeHandle.Complete();
@@ -320,16 +325,28 @@ namespace WavesBurstF32 {
         */
 
         [BurstCompile]
-        public struct PropagateLeftEdgeJobParallelBatch : IJobParallelForBatch {
+        public struct PropagateEdgeHorizontalJob : IJobParallelForBatch {
             [ReadOnly] public uint tick;
 
-            [ReadOnly] public NativeArray<float> curr_this;
-            [NativeDisableParallelForRestriction] public NativeArray<float> next_this;
+            [ReadOnly] public NativeArray<float> l_curr;
+            [NativeDisableParallelForRestriction] public NativeArray<float> l_next;
 
-            [ReadOnly] public NativeArray<float> curr_that;
-            [NativeDisableParallelForRestriction] public NativeArray<float> next_that;
+            [ReadOnly] public NativeArray<float> r_curr;
+            [NativeDisableParallelForRestriction] public NativeArray<float> r_next;
 
-            // Todo: also needs top and bottom for corner pixels...
+            /*
+            Todo: 
+            
+            - Problem: when we start, we have both edges with missing information
+            and the one that goes first is shit out of luck!
+
+            We can't actually write the algorithm to be symmetric.
+
+            Instead, we should make the tiles share their edge pixels, have them
+            conceptually overlap?
+
+            - Also needs top and bottom for corner pixels...
+            */
 
             public void Execute(int startIndex, int count) {
                 // Todo: supply these constants in a struct, as part of Octave
@@ -340,25 +357,20 @@ namespace WavesBurstF32 {
                 const float R = C * dt / dcd;
                 const float rSqr = R * R; // optimization
 
-                const float rMinusOne = R - 1f;
-                const float rPlusOne = R + 1f;
-                const float rSqrx2 = rSqr * 2f;
-
-                for (int i = 1; i < RES-1; i++) {
-                    int2 cThis = new int2(0    , i);
-                    int2 cThat = new int2(RES-1, i);
-                    int thisIdx = Idx(cThis);
-                    int thatIdx = Idx(cThat);
+                // Left tile
+                for (int i = 1; i < RES - 1; i++) {
+                    int r_idx = Idx(0       , i);
+                    int l_idx = Idx(RES - 1 , i);
 
                     float spatial = rSqr * (
-                        curr_that[Idx(RES - 1, i + 0)] +
-                        curr_this[Idx(1, i + 0)] +
-                        curr_this[Idx(0, i - 1)] +
-                        curr_this[Idx(0, i + 1)] -
-                        curr_this[thisIdx] * 4
+                        r_curr[Idx(0      , i + 0)] +
+                        l_curr[Idx(RES - 1, i + 0)] +
+                        l_curr[Idx(RES - 1, i - 1)] +
+                        l_curr[Idx(RES - 1, i + 1)] -
+                        l_curr[l_idx] * 4
                     );
 
-                    float temporal = 2 * curr_this[thisIdx] - next_this[thisIdx];
+                    float temporal = 2 * l_curr[l_idx] - l_next[l_idx];
 
                     float v = spatial + temporal;
 
@@ -366,24 +378,23 @@ namespace WavesBurstF32 {
                     const float ceiling = 1f;
                     v = math.clamp(v, -ceiling, ceiling);
 
-                    next_this[thisIdx] = v;
+                    l_next[l_idx] = v;
                 }
 
+                // Right tile
                 for (int i = 1; i < RES - 1; i++) {
-                    int2 cThis = new int2(0, i);
-                    int2 cThat = new int2(RES - 1, i);
-                    int thisIdx = Idx(cThis);
-                    int thatIdx = Idx(cThat);
+                    int r_idx = Idx(0       , i);
+                    int l_idx = Idx(RES - 1 , i);
 
                     float spatial = rSqr * (
-                        curr_this[Idx(0, i + 0)] +
-                        curr_that[Idx(RES - 1, i + 0)] +
-                        curr_that[Idx(RES - 1, i - 1)] +
-                        curr_that[Idx(RES - 1, i + 1)] -
-                        curr_that[thatIdx] * 4
+                        l_curr[Idx(RES - 1, i + 0)] +
+                        r_curr[Idx(1, i + 0)] +
+                        r_curr[Idx(0, i - 1)] +
+                        r_curr[Idx(0, i + 1)] -
+                        r_curr[r_idx] * 4
                     );
 
-                    float temporal = 2 * curr_that[thatIdx] - next_that[thatIdx];
+                    float temporal = 2 * r_curr[r_idx] - r_next[r_idx];
 
                     float v = spatial + temporal;
 
@@ -391,7 +402,7 @@ namespace WavesBurstF32 {
                     const float ceiling = 1f;
                     v = math.clamp(v, -ceiling, ceiling);
 
-                    next_that[thatIdx] = v;
+                    r_next[r_idx] = v;
                 }
             }
         }
