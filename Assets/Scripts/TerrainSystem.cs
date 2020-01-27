@@ -240,9 +240,6 @@ public class TerrainSystem : MonoBehaviour {
         }
     }
 
-    /* Todo: Optimize
-     * - Run as Burst Job
-     */
     private void Load(NativeArray<TreeNode> loadQueue) {
         int numVerts = _tileResolution + 1;
 

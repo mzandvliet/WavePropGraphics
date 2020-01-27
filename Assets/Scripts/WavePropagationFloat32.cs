@@ -153,8 +153,8 @@ namespace WavesBurstF32 {
                         b_next = _tiles[TIdxH(x + 1, y)].buffer.GetBuffer(buffIdx1),
                         index = _indexH
                     };
-                    var edgeHandle = edgeSimJob.ScheduleBatch(RES, RES, tileSimHandle);
-                    handles.Add(edgeHandle);
+                    var handle = edgeSimJob.ScheduleBatch(RES, RES, tileSimHandle);
+                    handles.Add(handle);
                 }
             }
 
@@ -170,10 +170,34 @@ namespace WavesBurstF32 {
                         b_curr = _tiles[TIdxH(x, y + 1)].buffer.GetBuffer(buffIdx0),
                         b_next = _tiles[TIdxH(x, y + 1)].buffer.GetBuffer(buffIdx1),
                     };
-                    var edgeHandle = edgeSimJob.ScheduleBatch(RES, RES, tileSimHandle);
-                    handles.Add(edgeHandle);
+                    var handle = edgeSimJob.ScheduleBatch(RES, RES, tileSimHandle);
+                    handles.Add(handle);
                 }
             }
+
+            // Corner jobs
+            for (int x = 0; x < TILES_PER_DIM-1; x++) {
+                for (int y = 0; y < TILES_PER_DIM-1; y++) {
+                    var cornerSimJob = new PropagateTileCornerJob()
+                    {
+                        tick = _tick,
+                        config = simConfig,
+                        bl_curr = _tiles[TIdxH(x + 0, y + 0)].buffer.GetBuffer(buffIdx0),
+                        bl_next = _tiles[TIdxH(x + 0, y + 0)].buffer.GetBuffer(buffIdx1),
+                        br_curr = _tiles[TIdxH(x + 1, y + 0)].buffer.GetBuffer(buffIdx0),
+                        br_next = _tiles[TIdxH(x + 1, y + 0)].buffer.GetBuffer(buffIdx1),
+                        tl_curr = _tiles[TIdxH(x + 0, y + 1)].buffer.GetBuffer(buffIdx0),
+                        tl_next = _tiles[TIdxH(x + 0, y + 1)].buffer.GetBuffer(buffIdx1),
+                        tr_curr = _tiles[TIdxH(x + 1, y + 1)].buffer.GetBuffer(buffIdx0),
+                        tr_next = _tiles[TIdxH(x + 1, y + 1)].buffer.GetBuffer(buffIdx1),
+                    };
+                    var handle = cornerSimJob.ScheduleBatch(RES, RES, tileSimHandle);
+                    handles.Add(handle);
+                }
+            }
+
+            tileSimHandle = JobHandle.CombineDependencies(handles);
+            handles.Clear();
             
             _tick++;
 
@@ -238,7 +262,7 @@ namespace WavesBurstF32 {
 
                 Rng rng;
                 unchecked {
-                    rng = new Rng(0x816EFB5Du + tick * 0x7461CA0Du + tile.x * 0x66F38F0Bu + tile.y * 0x568DAAA9u);
+                    rng = new Rng(0x816EFB5Du + tick * 0x7461CA0Du + (uint)tile.GetHashCode());
                 }
 
                 int2 pos = new int2(rng.NextInt(RES), rng.NextInt(RES));
@@ -247,8 +271,8 @@ namespace WavesBurstF32 {
                 float amplitude = rng.NextFloat(-0.5f, 0.5f);
                 float radiusScale = math.PI * 2f / (float)radius;
 
-                const int impulsePeriod = 72 * 4;
-                if (tick == 0 || rng.NextInt(impulsePeriod) == 0) {
+                const int impulsePeriod = 128 * 128;
+                if (rng.NextInt(impulsePeriod) == 0) {
                     for (int y = -radius; y <= radius; y++) {
                         for (int x = -radius; x <= radius; x++) {
                             int xIdx = pos.x + x;
@@ -511,6 +535,49 @@ namespace WavesBurstF32 {
                     a_next[a_idx] = v;
                     b_next[PIdxH(i, 0)] = v;
                 }
+            }
+        }
+
+        [BurstCompile]
+        public struct PropagateTileCornerJob : IJobParallelForBatch {
+            [ReadOnly] public uint tick;
+
+            [ReadOnly] public SimConfig config;
+
+            [ReadOnly] public NativeArray<float> bl_curr;
+            [NativeDisableParallelForRestriction] public NativeArray<float> bl_next;
+
+            [ReadOnly] public NativeArray<float> br_curr;
+            [NativeDisableParallelForRestriction] public NativeArray<float> br_next;
+
+            [ReadOnly] public NativeArray<float> tl_curr;
+            [NativeDisableParallelForRestriction] public NativeArray<float> tl_next;
+
+            [ReadOnly] public NativeArray<float> tr_curr;
+            [NativeDisableParallelForRestriction] public NativeArray<float> tr_next;
+
+            public void Execute(int startIndex, int count) {
+                int centerIdx = PIdxH(RES - 1, RES - 1);
+
+                float spatial = config.rSqr * (
+                    bl_curr[PIdxH(RES - 2, RES - 1)] +
+                    br_curr[PIdxH(1, RES - 1)] +
+                    bl_curr[PIdxH(RES - 1, RES - 2)] +
+                    br_curr[PIdxH(RES - 1, 1)] -
+                    bl_curr[centerIdx] * 4
+                );
+
+                float temporal = 2 * bl_curr[centerIdx] - bl_next[centerIdx];
+
+                float v = spatial + temporal;
+
+                // Symmetric clamping as a safeguard
+                const float ceiling = 1f;
+                v = math.clamp(v, -ceiling, ceiling);
+
+                bl_next[PIdxH(RES-1, RES-1)] = v;
+                br_next[PIdxH(0, RES-1)] = v;
+                tl_next[PIdxH(RES-1, 0)] = v;
             }
         }
 
