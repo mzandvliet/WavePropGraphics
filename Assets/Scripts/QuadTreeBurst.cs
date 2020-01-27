@@ -5,6 +5,7 @@ using System.Runtime.CompilerServices;
 using Unity.Jobs;
 using System.Runtime.InteropServices;
 using Unity.Burst;
+using Waves;
 
 /*
 Todo: 
@@ -20,6 +21,7 @@ expansion algorithm always yields such a balanced tree.
 public struct ExpandQuadTreeJob : IJob {
     [ReadOnly] public CameraInfo camInfo;
     [ReadOnly] public NativeSlice<float> lodDistances;
+    [ReadOnly] public WaveSampler waveSampler;
 
     public Tree tree;
     public NativeList<TreeNode> visibleSet;
@@ -42,7 +44,7 @@ public struct ExpandQuadTreeJob : IJob {
 
             // If not, we should create children if we're in LOD range
             if (TreeUtil.Intersect(node.bounds, camInfo, lodDistances[node.depth] * 1.33f)) {
-                node = tree.Open(mortonIdx);
+                node = tree.Open(mortonIdx, waveSampler);
 
                 int childBase = mortonIdx.x << 2;
                 for (int i = 0; i < 4; i++) {
@@ -105,7 +107,7 @@ public static class TreeUtil {
 // Todo: z-order curve addressing structure will simplify all of this structure
 public struct Tree : System.IDisposable {
     private NativeHashMap<int2, TreeNode> _nodes;
-    private HeightSampler _heights;
+    
 
     public int MaxDepth {
         get;
@@ -120,10 +122,9 @@ public struct Tree : System.IDisposable {
         get => _nodes;
     }
 
-    public Tree(Bounds bounds, int maxLevels, HeightSampler heights, Allocator allocator) {
+    public Tree(Bounds bounds, int maxLevels, Allocator allocator) {
         _nodes = new NativeHashMap<int2, TreeNode>(mathi.SumPowersOfFour(maxLevels), allocator);
         MaxDepth = maxLevels;
-        _heights = heights;
 
         var root = new TreeNode(bounds, 0);
         _nodes.TryAdd(0, root);
@@ -139,7 +140,7 @@ public struct Tree : System.IDisposable {
         _nodes.Dispose();
     }
 
-    public TreeNode Open(int2 mortonIdx) {
+    public TreeNode Open(int2 mortonIdx, WaveSampler sampler) {
         var node = _nodes[mortonIdx];
         var halfSize = node.bounds.size / 2;
 
@@ -148,10 +149,10 @@ public struct Tree : System.IDisposable {
         var tr = new Bounds(node.bounds.position + new int3(halfSize.x, 0, halfSize.z), halfSize);
         var br = new Bounds(node.bounds.position + new int3(halfSize.x, 0, 0), halfSize);
 
-        bl = FitHeightSamples(bl, _heights);
-        tl = FitHeightSamples(tl, _heights);
-        tr = FitHeightSamples(tr, _heights);
-        br = FitHeightSamples(br, _heights);
+        bl = FitHeightSamples(bl, sampler);
+        tl = FitHeightSamples(tl, sampler);
+        tr = FitHeightSamples(tr, sampler);
+        br = FitHeightSamples(br, sampler);
 
         int childBase = mortonIdx.x << 2;
         int childDepth = node.depth + 1;
@@ -180,21 +181,25 @@ public struct Tree : System.IDisposable {
 
     }
 
-    private static Bounds FitHeightSamples(Bounds bounds, HeightSampler sampler) {
-        /* Todo: move this logic out of this class, too much business going on */
+    private static Bounds FitHeightSamples(Bounds bounds, WaveSampler sampler) {
+        /* 
+        Todo: determine min/max height for a given bound earlier in the process,
+        possibly letting wave simulator keep track of it per LOD, as it passes
+        over all the data anyway.
+        */
 
         int lowest = bounds.position.y;
         int highest = bounds.position.y + bounds.size.y;
 
         const int samplingResolution = 4;
 
-        float stepSize = bounds.size.x / (samplingResolution - 1);
+        float stepSize = bounds.size.x / (float)(samplingResolution - 1);
 
         for (int x = 0; x < samplingResolution; x++) {
             for (int z = 0; z < samplingResolution; z++) {
                 float posX = bounds.position.x + x * stepSize;
                 float posZ = bounds.position.z + z * stepSize;
-                float height = sampler.Sample(posX, posZ) * sampler.HeightScale;
+                float height = sampler.Sample(posX, posZ) * sampler.heightScale;
 
                 if (height > highest) {
                     highest = (int)height;

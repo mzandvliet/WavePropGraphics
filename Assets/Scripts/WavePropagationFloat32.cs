@@ -7,7 +7,7 @@ using Rng = Unity.Mathematics.Random;
 using System.Runtime.CompilerServices;
 using Unity.Collections.LowLevel.Unsafe;
 
-namespace WavesBurstF32 {
+namespace Waves {
     public struct Octave : System.IDisposable {
         public PingPongBuffer<float> buffer;
 
@@ -51,14 +51,71 @@ namespace WavesBurstF32 {
         }
     }
 
-    public class WavePropagationFloat32 : MonoBehaviour {
+    public struct WaveSampler {
+        [ReadOnly] public NativeArray<float> buffer;
+        [ReadOnly] public NativeArray<int> tileMap;
+        [ReadOnly] public readonly float heightScale;
+
+        public WaveSampler(NativeArray<float> buffer, NativeArray<int> tileMap, float heightScale) {
+            this.buffer = buffer;
+            this.tileMap = tileMap;
+            this.heightScale = heightScale;
+        }
+
+        /*
+        Slow, naive, ad-hoc sampling function
+
+        Generates height values in normalized float range, [0,1]
+        x,y are in world units, meters
+
+        Todo: respect tileMap indirection, worldshifting, etc.
+        */
+        public float Sample(float x, float z) {
+            const float horScale = 1f / 8f;
+            x *= horScale;
+            z *= horScale;
+
+            int xFloor = (int)math.floor(x);
+            int zFloor = (int)math.floor(z);
+
+            // Clamp?
+            // xFloor = math.clamp(xFloor, 0, WaveSimulator.RES);
+            // zFloor = math.clamp(zFloor, 0, WaveSimulator.RES);
+
+            if (xFloor < 0 || xFloor >= WaveSimulator.RES-1 || zFloor < 0 || zFloor >= WaveSimulator.RES-1) {
+                return 0f;
+            }
+
+            float xFrac = x - (float)xFloor;
+            float zFrac = z - (float)zFloor;
+            
+            int bl_idx = WaveSimulator.Idx(xFloor + 0, zFloor + 0);
+            int br_idx = WaveSimulator.Idx(xFloor + 1, zFloor + 0);
+            int tl_idx = WaveSimulator.Idx(xFloor + 0, zFloor + 1);
+            int tr_idx = WaveSimulator.Idx(xFloor + 1, zFloor + 1);
+
+            float bl_sample = buffer[bl_idx];
+            float br_sample = buffer[br_idx];
+            float tl_sample = buffer[tl_idx];
+            float tr_sample = buffer[tr_idx];
+
+            return math.lerp(
+                math.lerp(bl_sample, br_sample, xFrac),
+                math.lerp(tl_sample, tr_sample, xFrac),
+                zFrac
+            );
+        }
+    }
+
+    public class WaveSimulator : System.IDisposable {
         private Octave _octave;
 
-        private const int RES = 512;
-        private const int TILE_RES = 16;
-        private const int TILES_PER_DIM = RES / TILE_RES;
+        public const int RES = 512;
+        public const int TILE_RES = 16;
+        public const int TILES_PER_DIM = RES / TILE_RES;
+        private float _heightScale;
 
-        private NativeArray<int> _tileMap;
+        private NativeArray<int> _tileMap; // Todo: use for storing tile addresses when implementing world shift
 
         const int TICKSPERFRAME = 1;
         const int NUMOCTAVES = 1;
@@ -66,26 +123,40 @@ namespace WavesBurstF32 {
         private Texture2D _screenTex;
 
         private uint _tick = 0;
+
+        private JobHandle _simHandle;
         private JobHandle _renderHandle;
 
-        private void Awake() {
-            Application.targetFrameRate = 60;
-
+        public WaveSimulator(float heightScale) {
+            _heightScale = heightScale;
+            
             _octave = new Octave(RES, TICKSPERFRAME);
+            _tileMap = new NativeArray<int>(TILES_PER_DIM * TILES_PER_DIM, Allocator.Persistent);
 
             _screenTex = new Texture2D(RES, RES, TextureFormat.RG16, false, true);
             _screenTex.filterMode = FilterMode.Point;
         }
 
-        private void OnDestroy() {
+        public void Dispose() {
+            _simHandle.Complete();
             _renderHandle.Complete();
+
             _octave.Dispose();
+            _tileMap.Dispose();
+        }
+
+        public WaveSampler GetSampler() {
+            return new WaveSampler(
+                _octave.buffer.GetBuffer(buffIdx1),
+                _tileMap,
+                _heightScale
+            );
         }
 
         private int buffIdx0 = 0;
         private int buffIdx1 = 1;
 
-        private void Update() {
+        public void StartUpdate() {
             var scaleFactor = 1f;
             var simConfig = new SimConfig(
                 scaleFactor,            // double per octave
@@ -118,7 +189,13 @@ namespace WavesBurstF32 {
                 _tick++;
             }
             simHandle.Complete();
+        }
 
+        public void CompleteUpdate() {
+            _simHandle.Complete();
+        }
+
+        public void StartRender() {
             var texture = _screenTex.GetRawTextureData<byte2>();
             var waveData = _octave.buffer.GetBuffer(buffIdx1);
             var renderJob = new RenderJobParallel
@@ -129,12 +206,12 @@ namespace WavesBurstF32 {
             _renderHandle = renderJob.Schedule(RES * RES, 32, _renderHandle);
         }
 
-        private void LateUpdate() {
+        public void CompleteRender() {
             _renderHandle.Complete();
             _screenTex.Apply(false);
         }
 
-        private void OnGUI() {
+        public void OnDrawGUI() {
             float size = math.min(Screen.width, Screen.height);
             GUI.DrawTexture(new Rect(0f, 0f, size, size), _screenTex, ScaleMode.ScaleToFit);
         }
@@ -326,7 +403,7 @@ namespace WavesBurstF32 {
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static int TileIdx(int x, int y) {
+        public static int TileIdx(int x, int y) {
             int tileX = x / TILE_RES;
             int tileY = y / TILE_RES;
             int pixelX = x % TILE_RES;
@@ -341,7 +418,7 @@ namespace WavesBurstF32 {
         // Index TILE_RES*TILE_RES tiles, who's base addresses are in Morton order
         // Todo: precalculate tile's morton address once per job
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static int Idx(int x, int y) {
+        public static int Idx(int x, int y) {
             int tileX = x >> 4;
             int tileY = y >> 4;
             int pixelX = x - (tileX << 4);
@@ -350,7 +427,7 @@ namespace WavesBurstF32 {
             int tileAddr = Morton.Code2d(tileX, tileY);
             int pixelAddr = (tileAddr << 8) | ((pixelY << 4) + pixelX);
 
-            // Working-but-slow
+            // Working-but-slow:
 
             // int tileX = x / TILE_RES;
             // int tileY = y / TILE_RES;
@@ -361,7 +438,7 @@ namespace WavesBurstF32 {
             // int pixelAddress = (tileAddress << 8) | (pixelY * TILE_RES + pixelX);
             // note: shift by 8 assumes TILE_RES = 16
 
-            // Identity transform for testing
+            // Identity transform for testing:
 
             // int tileAddress = (tileY * TILES_PER_DIM + tileX) * (TILE_RES*TILE_RES);
             // int pixelAddress = tileAddress + (pixelY * TILE_RES + pixelX);
@@ -370,17 +447,12 @@ namespace WavesBurstF32 {
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static int Right(int addr) {
-            return addr + 1;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static int2 Coord(int i) {
+        public static int2 Coord(int i) {
             return new int2(i % RES, i / RES);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static int2 Coord(int i, int res) {
+        public static int2 Coord(int i, int res) {
             return new int2(i % res, i / res);
         }
     }

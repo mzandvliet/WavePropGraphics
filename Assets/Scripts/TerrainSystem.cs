@@ -6,6 +6,7 @@ using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Profiling;
+using Waves;
 
 /*
 
@@ -55,7 +56,8 @@ public class TerrainSystem : MonoBehaviour {
     [SerializeField] private int _tileResolution = 16;
     [SerializeField] private int _numLods = 10;
     [SerializeField] private int _lodZeroRange = 32;
-    [SerializeField] private int _heightScale = 512;
+
+    private const int WaveHeightScale = 128;
 
     private NativeArray<float> _lodDistances;
 
@@ -69,21 +71,23 @@ public class TerrainSystem : MonoBehaviour {
     private NativeList<TreeNode> _loadQueue; // Tiles to stream into active set
     private NativeList<TreeNode> _unloadQueue; // Tiles to stream out of active set
 
-    private HeightSampler _heightSampler;
+    private WaveSimulator _waves;
 
     void Awake() {
+        Application.targetFrameRate = 60;
+
+        _waves = new WaveSimulator(WaveHeightScale);
+
         _lodDistances = new NativeArray<float>(_numLods, Allocator.Persistent);
         QuadTree.GenerateLodDistances(_lodDistances, _lodZeroRange);
-
-        _heightSampler = new HeightSampler(_heightScale);
 
         int maxNodes = mathi.SumPowersOfFour(_numLods);
 
         var bMin = new int3(-_lodZeroScale / 2, 0, -_lodZeroScale / 2);
-        var lodZeroScale = new int3(_lodZeroScale, _heightScale, _lodZeroScale);
+        var lodZeroScale = new int3(_lodZeroScale, WaveHeightScale, _lodZeroScale);
 
-        _currVisTree = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
-        _lastVisTree = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
+        _currVisTree = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, Allocator.Persistent);
+        _lastVisTree = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, Allocator.Persistent);
 
         _visibleSet = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
 
@@ -99,11 +103,14 @@ public class TerrainSystem : MonoBehaviour {
     }
 
     private void OnDestroy() {
+        _lodJobHandle.Complete();
+
+        _waves.Dispose();
+
         _lodDistances.Dispose();
 
         _currVisTree.Dispose();
         _lastVisTree.Dispose();
-
         _visibleSet.Dispose();
 
         _loadQueue.Dispose();
@@ -136,29 +143,37 @@ public class TerrainSystem : MonoBehaviour {
 
         _camInfo = CameraInfo.Create(_camera, Allocator.Persistent);
 
+        _waves.StartUpdate();
+        // Todo: arrange scheduling such that this is non-blocking?
+        _waves.CompleteUpdate();
+
+        var waveSampler = _waves.GetSampler();
+
         var bMin = new int3(-_lodZeroScale / 2, 0, -_lodZeroScale / 2);
-        var lodZeroScale = new int3(_lodZeroScale, _heightScale, _lodZeroScale);
+        var lodZeroScale = new int3(_lodZeroScale, WaveHeightScale, _lodZeroScale);
 
         _currVisTree.Clear(new Bounds(bMin, lodZeroScale));
         var loadedNodes = _tileMap.GetKeyArray(Allocator.TempJob);
         
+        // Todo: let these job depend on simulation jobs
         var expandTreeJob = new ExpandQuadTreeJob() {
             camInfo = _camInfo,
             lodDistances = _lodDistances,
+            waveSampler  = waveSampler,
             tree = _currVisTree,
             visibleSet = _visibleSet
         };
 
         _lodJobHandle = expandTreeJob.Schedule();
 
+        var deferredVisibleSet = _visibleSet.AsDeferredJobArray();
         var unloadDiffJob = new DiffQuadTreesJob() {
             a = loadedNodes,
-            b = _visibleSet,
+            b = deferredVisibleSet,
             diff = _unloadQueue
         };
-
         var loadDiffJob = new DiffQuadTreesJob() {
-            a = _visibleSet,
+            a = deferredVisibleSet,
             b = loadedNodes,
             diff = _loadQueue
         };
@@ -175,14 +190,20 @@ public class TerrainSystem : MonoBehaviour {
     private void LateUpdate() {
         _lodJobHandle.Complete();
 
-        Profiler.BeginSample("Unload");
-        Unload(_unloadQueue);
+        Profiler.BeginSample("FreeTile");
+        FreeTiles(_unloadQueue);
         Profiler.EndSample();
 
-        Profiler.BeginSample("Load");
-        Load(_loadQueue);
+        Profiler.BeginSample("AssignTile");
+        AssignTiles(_loadQueue);
         Profiler.EndSample();
 
+        Profiler.BeginSample("StreamData");
+        // Todo: either move to earlier in, or better yet, sample wave maps directly on gpu
+        var sampler = _waves.GetSampler();
+        StreamNodeData(_visibleSet, sampler);
+        Profiler.EndSample();
+        
         _camInfo.Dispose();
     }
 
@@ -220,7 +241,7 @@ public class TerrainSystem : MonoBehaviour {
         nodeList.Dispose();
     }
 
-    private void Unload(NativeArray<TreeNode> unloadQueue) {
+    private void FreeTiles(NativeArray<TreeNode> unloadQueue) {
         for (int i = 0; i < unloadQueue.Length; i++) {
             TreeNode node = unloadQueue[i];
 
@@ -240,11 +261,7 @@ public class TerrainSystem : MonoBehaviour {
         }
     }
 
-    private void Load(NativeArray<TreeNode> loadQueue) {
-        int numVerts = _tileResolution + 1;
-
-        var streamHandles = new NativeArray<JobHandle>(loadQueue.Length, Allocator.Temp, NativeArrayOptions.ClearMemory);
-
+    private void AssignTiles(NativeArray<TreeNode> loadQueue) {
         for (int i = 0; i < loadQueue.Length; i++) {
             var node = loadQueue[i];
 
@@ -254,7 +271,7 @@ public class TerrainSystem : MonoBehaviour {
             var lerpRanges = new Vector4(_lodDistances[node.depth] * lMin, _lodDistances[node.depth] * lMax);
 
             if (_tileMap.ContainsKey(node)) {
-                Debug.LogWarningFormat("Attempting to load tile that's already in use! {0}", node);
+                Debug.LogWarningFormat("Attempting to assign tile that's already in use! {0}", node);
                 continue;
             }
 
@@ -271,39 +288,51 @@ public class TerrainSystem : MonoBehaviour {
             mesh.Transform.position = position;
             mesh.Transform.localScale = new float3(node.bounds.size.x, 1f, node.bounds.size.z);
             mesh.MeshRenderer.material.SetFloat("_Scale", node.bounds.size.x);
-            mesh.MeshRenderer.material.SetFloat("_HeightScale", _heightScale);
+            mesh.MeshRenderer.material.SetFloat("_HeightScale", WaveHeightScale);
             mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
+
+            mesh.MeshRenderer.material.SetTexture("_HeightTex", mesh.HeightMap);
+            mesh.MeshRenderer.material.SetTexture("_NormalTex", mesh.NormalMap);
+            mesh.Mesh.bounds = new UnityEngine.Bounds(Vector3.zero, (float3)node.bounds.size);
+            mesh.gameObject.name = string.Format("Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z);
+            mesh.gameObject.SetActive(true);
+        }
+    }
+
+    /* Todo:
+    - Send wave data directly to the gpu, then sample it there directly, saves work here
+    */
+
+    private void StreamNodeData(NativeArray<TreeNode> nodes, WaveSampler sampler) {
+        var streamHandles = new NativeArray<JobHandle>(nodes.Length, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+        int numVerts = _tileResolution + 1;
+
+        for (int i = 0; i < nodes.Length; i++) {
+            var node = nodes[i];
+            var mesh = _tiles[_tileMap[node]];
 
             var heights = mesh.HeightMap.GetRawTextureData<byte2>();
             var normals = mesh.NormalMap.GetRawTextureData<float2>();
 
-            var generateJob = new StreamHeightDataJob() {
-                heights=heights,
-                normals=normals,
-                numVerts=numVerts,
-                sampler=_heightSampler,
-                position=position,
-                scale=node.bounds.size.x
+            var generateJob = new StreamWaveDataJob()
+            {
+                heights = heights,
+                normals = normals,
+                numVerts = numVerts,
+                sampler = sampler,
+                bounds = node.bounds
             };
-            streamHandles[i] = generateJob.Schedule(numVerts*numVerts, 32);
+            streamHandles[i] = generateJob.Schedule(numVerts * numVerts, 32);
         }
 
         JobHandle.CompleteAll(streamHandles);
 
-        for (int i = 0; i < loadQueue.Length; i++) {
-            var node = loadQueue[i];
+        for (int i = 0; i < nodes.Length; i++) {
+            var node = nodes[i];
             var mesh = _tiles[_tileMap[node]];
 
             mesh.HeightMap.Apply(false);
             mesh.NormalMap.Apply(true);
-
-            mesh.MeshRenderer.material.SetTexture("_HeightTex", mesh.HeightMap);
-            mesh.MeshRenderer.material.SetTexture("_NormalTex", mesh.NormalMap);
-
-            mesh.Mesh.bounds = new UnityEngine.Bounds(Vector3.zero, (float3)node.bounds.size);
-
-            mesh.gameObject.name = string.Format("Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z);
-            mesh.gameObject.SetActive(true);
         }
 
         streamHandles.Dispose();
@@ -343,24 +372,26 @@ public class TerrainSystem : MonoBehaviour {
     }
 
     [BurstCompile]
-    public struct StreamHeightDataJob : IJobParallelFor {
+    public struct StreamWaveDataJob : IJobParallelFor {
         public NativeSlice<byte2> heights;
         public NativeSlice<float2> normals;
         public int numVerts;
-        public HeightSampler sampler;
-        public Vector3 position;
-        public float scale;
+        public WaveSampler sampler;
+        public Bounds bounds;
+
+
         
         public void Execute(int idx) {
-            float stepSize = scale / (float)(numVerts - 1);
-            float stepSizeNormals = scale / (float)(numVerts - 1);
-            float delta = stepSizeNormals * 0.1f;
+            // Todo: calculate job-constant data on main thread instead of per pixel
+
+            float stepSize = bounds.size.x / (float)(numVerts - 1);
+            float delta = stepSize * 0.1f;
 
             int x = idx % numVerts;
             int z = idx / numVerts;
 
-            float xPos = position.x + x * stepSize;
-            float zPos = position.z + z * stepSize;
+            float xPos = bounds.position.x + x * stepSize;
+            float zPos = bounds.position.z + z * stepSize;
 
             float height = sampler.Sample(xPos, zPos);
 
@@ -369,16 +400,15 @@ public class TerrainSystem : MonoBehaviour {
                 (byte)(Mathf.RoundToInt(height * 65535f))
             );
 
-            xPos = position.x + x * stepSizeNormals;
-            zPos = position.z + z * stepSizeNormals;
-
+            // Todo: let the WaveSampler perform this finite differencing,
+            // since it is already doing billinear sampling and such.
             float heightL = sampler.Sample(xPos - delta, zPos);
             float heightR = sampler.Sample(xPos + delta, zPos);
             float heightB = sampler.Sample(xPos, zPos - delta);
             float heightT = sampler.Sample(xPos, zPos + delta);
 
-            Vector3 lr = new Vector3(delta * 2f, (heightR - heightL) * sampler.HeightScale, 0f);
-            Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.HeightScale, delta * 2f);
+            Vector3 lr = new Vector3(delta * 2f, (heightR - heightL) * sampler.heightScale, 0f);
+            Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.heightScale, delta * 2f);
             Vector3 normal = Vector3.Cross(bt, lr).normalized;
 
             // Note: normal z-component is recalculated on the gpu, which saves transfer memory
@@ -393,6 +423,32 @@ public interface IHeightSampler {
     float HeightScale { get; }
     float Sample(float x, float z);
 }
+
+// public struct HeightSampler : IHeightSampler {
+//     private float _heightScale;
+
+//     public float HeightScale {
+//         get { return _heightScale; }
+//     }
+
+//     public HeightSampler(float heightScale) {
+//         _heightScale = heightScale;
+//     }
+
+//     /// Generates height values in normalized float range, [0,1]
+//     public float Sample(float x, float z) {
+//         float h = 0f;
+
+//         for (int i = 0; i < 10; i++) {
+//             h += 
+//                 (0.5f + Mathf.Sin(0.73197f * ((i+1)*11) + (x * Mathf.PI) * 0.001093f * (i+1)) * 0.5f) *
+//                 (0.5f + Mathf.Cos(-1.1192f * ((i+1) *17) + (z * Mathf.PI) * 0.001317f * (i+1)) * 0.5f) *
+//                 (0.5f / (float)(1+i*2));
+//         }
+
+//         return h;
+//     }
+// }
 
 public struct HeightSampler : IHeightSampler {
     private float _heightScale;
@@ -410,10 +466,10 @@ public struct HeightSampler : IHeightSampler {
         float h = 0f;
 
         for (int i = 0; i < 10; i++) {
-            h += 
-                (0.5f + Mathf.Sin(0.73197f * ((i+1)*11) + (x * Mathf.PI) * 0.001093f * (i+1)) * 0.5f) *
-                (0.5f + Mathf.Cos(-1.1192f * ((i+1) *17) + (z * Mathf.PI) * 0.001317f * (i+1)) * 0.5f) *
-                (0.5f / (float)(1+i*2));
+            h +=
+                (0.5f + Mathf.Sin(0.73197f * ((i + 1) * 11) + (x * Mathf.PI) * 0.001093f * (i + 1)) * 0.5f) *
+                (0.5f + Mathf.Cos(-1.1192f * ((i + 1) * 17) + (z * Mathf.PI) * 0.001317f * (i + 1)) * 0.5f) *
+                (0.5f / (float)(1 + i * 2));
         }
 
         return h;
