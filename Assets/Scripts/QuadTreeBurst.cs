@@ -130,8 +130,9 @@ public struct Tree : System.IDisposable {
     }
 
     public void Clear(Bounds bounds) {
+        _nodes.Clear();
         var root = new TreeNode(bounds, 0);
-        _nodes[0] = root;
+        _nodes.TryAdd(0, root);
     }
 
     public void Dispose() {

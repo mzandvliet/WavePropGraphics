@@ -52,7 +52,7 @@ namespace WavesBurstF32 {
     public class WavePropagationFloat32 : MonoBehaviour {
         private Tile[] _tiles;
 
-        private const int RES = 32;
+        private const int RES = 16;
 
         const int TILES_PER_DIM = 16;
         const int NUM_TILES = TILES_PER_DIM * TILES_PER_DIM;
@@ -100,7 +100,7 @@ namespace WavesBurstF32 {
 
             var scaleFactor = 1f;
             var simConfig = new SimConfig(
-                scaleFactor,            // double or tripple per octave
+                scaleFactor,            // double per octave
                 0.15f * scaleFactor,    // dcd
                 0.0175f,                // dt
                 0.9f                    // C
@@ -353,6 +353,7 @@ namespace WavesBurstF32 {
             
 
             public void Execute(int startIndex, int count) {
+                // Calculates inner pixels, skipping 1 pixel skirt
 
                 for (int i = startIndex; i < startIndex + count; i++) {
                     int2 c = new int2(1,1) + Coord(i, RES-2);
@@ -391,6 +392,10 @@ namespace WavesBurstF32 {
 
         */
 
+        /*
+         Function pointer used to make the tile-edge job code work
+        for both horizontal and vertical edges
+        */
         public delegate int Indexer(int x, int y);
 
         [BurstCompile]

@@ -8,11 +8,20 @@ using UnityEngine;
 using UnityEngine.Profiling;
 
 /*
+
+Uses a quadtree mechanism to manage a virtual texturing / virtual meshing scheme
+
+See here for an overview and links to good talks by Battet08,Waveren09:
+
+http://holger.dammertz.org/stuff/notes_VirtualTexturing.html
+
+---------------------------------------
+
 Todo:
 
 Octaved height texture update from interactive wave simulation
 
-Improve normal map popping
+Improve normal map popping (bicubic height sampling)
 
 Single mesh prototype, use material property blocks to assign textures and transforms
 Shadow pass
@@ -23,10 +32,9 @@ Separate culling passes to find visual and shadow caster tiles, use pass tags to
 
 Use TextureStreaming API? Texture2D.requestedMipmapLevel?
 https://docs.unity3d.com/Manual/TextureStreaming-API.html
+(Doesn't seem like it works with procedurally generated data...)
 
 New Texture2D api features to try:
-- LoadRawTextureData(NativeArra<T> data), https://docs.unity3d.com/ScriptReference/Texture2D.LoadRawTextureData.html
-- GetRawTextureData(), returns a reference which is even better, https://docs.unity3d.com/ScriptReference/Texture2D.GetRawTextureData.html
 - Compress(), compresses into DXT1, or DXT5 if alpha channel
 */
 
@@ -51,15 +59,15 @@ public class TerrainSystem : MonoBehaviour {
 
     private NativeArray<float> _lodDistances;
 
-    private List<TerrainTile> _tiles;
-    private NativeStack<int> _tileIndexPool;
-    private NativeHashMap<TreeNode, int> _tileMap;
+    private List<TerrainTile> _tiles; // Actual mesh/texture data
+    private NativeStack<int> _tileIndexPool; // Index into list of tiles
+    private NativeHashMap<TreeNode, int> _tileMap; // Page table that maps quadtree nodes to tiles
 
     private Tree _currVisTree;
     private Tree _lastVisTree;
-    private NativeList<TreeNode> _currVisible;
-    private NativeList<TreeNode> _toLoad;
-    private NativeList<TreeNode> _toUnload;
+    private NativeList<TreeNode> _visibleSet; // Flat list of quadtree nodes, right now containing only deepest visible level
+    private NativeList<TreeNode> _loadQueue; // Tiles to stream into active set
+    private NativeList<TreeNode> _unloadQueue; // Tiles to stream out of active set
 
     private HeightSampler _heightSampler;
 
@@ -77,10 +85,10 @@ public class TerrainSystem : MonoBehaviour {
         _currVisTree = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
         _lastVisTree = new Tree(new Bounds(bMin, lodZeroScale), _lodDistances.Length, _heightSampler, Allocator.Persistent);
 
-        _currVisible = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
+        _visibleSet = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
 
-        _toLoad = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
-        _toUnload = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
+        _loadQueue = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
+        _unloadQueue = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
 
         _tiles = new List<TerrainTile>();
         _tileIndexPool = new NativeStack<int>(maxNodes, Allocator.Persistent);
@@ -96,10 +104,10 @@ public class TerrainSystem : MonoBehaviour {
         _currVisTree.Dispose();
         _lastVisTree.Dispose();
 
-        _currVisible.Dispose();
+        _visibleSet.Dispose();
 
-        _toLoad.Dispose();
-        _toUnload.Dispose();
+        _loadQueue.Dispose();
+        _unloadQueue.Dispose();
 
         _tileMap.Dispose();
         _tileIndexPool.Dispose();
@@ -115,27 +123,6 @@ public class TerrainSystem : MonoBehaviour {
     -- Configuration --
     
     Make easier-to-use parameters. Like, at max lod I want 1px/m resolution.
-    
-    -- Architecture --
-    
-    We are receiving a new list of quadtree nodes each time, which we need to compare with the old list.
-    
-    Testing equality of nodes is iffy. Nodes are reference types in one sense, but then value types later.
-    Also, if nodes have more data to them it makes more sense to keep them as reference type. Caching and
-    reusing a single tree instead of generating an immutable tree each frame and diffing.
-    
-    We could mark nodes on a persistent tree structure dirty if some action is need. Update this dirty state
-    when validating the tree each frame, and creating jobs frome there.
-    
-    We currently use three collections to manage node and mesh instances. It's a bit unwieldy.
-    
-    Decouple visrep and simrep streaming. Allow multiple perspectives. Allow simrep streaming without a perspective.
-    
-    -- Performance --
-    
-    We could use a single mesh instance on the GPU, but we still need separate mesh instances on the cpu for tiles
-    we want colliders on, which is every lod > x
-    
     */
 
     private JobHandle _lodJobHandle;
@@ -158,7 +145,7 @@ public class TerrainSystem : MonoBehaviour {
             camInfo = _camInfo,
             lodDistances = _lodDistances,
             tree = _currVisTree,
-            visibleSet = _currVisible
+            visibleSet = _visibleSet
         };
 
         _lodJobHandle = expandTreeJob.Schedule();
@@ -182,19 +169,21 @@ public class TerrainSystem : MonoBehaviour {
 
         var loadedNodes = _tileMap.GetKeyArray(Allocator.TempJob);
 
-        _toUnload.Clear();
+        _unloadQueue.Clear();
         for (int i = 0; i < loadedNodes.Length; i++) {
-            if (!_currVisible.Contains(loadedNodes[i])) {
-                _toUnload.Add(loadedNodes[i]);
+            if (!_visibleSet.Contains(loadedNodes[i])) {
+                _unloadQueue.Add(loadedNodes[i]);
             }
         }
 
-        _toLoad.Clear();
-        for (int i = 0; i < _currVisible.Length; i++) {
-            if (!loadedNodes.Contains(_currVisible[i])) {
-                _toLoad.Add(_currVisible[i]);
+        _loadQueue.Clear();
+        for (int i = 0; i < _visibleSet.Length; i++) {
+            if (!loadedNodes.Contains(_visibleSet[i])) {
+                _loadQueue.Add(_visibleSet[i]);
             }
         }
+
+        loadedNodes.Dispose();
 
         // _lodJobHandle = JobHandle.CombineDependencies(
         //     unloadDiffJob.Schedule(_lodJobHandle),
@@ -205,17 +194,18 @@ public class TerrainSystem : MonoBehaviour {
         var temp = _currVisTree;
         _currVisTree = _lastVisTree;
         _lastVisTree = temp;
+
     }
 
     private void LateUpdate() {
         _lodJobHandle.Complete();
 
         Profiler.BeginSample("Unload");
-        Unload(_toUnload);
+        Unload(_unloadQueue);
         Profiler.EndSample();
 
         Profiler.BeginSample("Load");
-        Load(_toLoad);
+        Load(_loadQueue);
         Profiler.EndSample();
 
         _camInfo.Dispose();
@@ -230,8 +220,9 @@ public class TerrainSystem : MonoBehaviour {
     }
 
     private void DrawTree(Tree tree) {
-        for (int i = 0; i < tree.Nodes.Length; i++) {
-            var node = tree.Nodes[i];
+        var nodeList = tree.Nodes.GetValueArray(Allocator.Temp);
+        for (int i = 0; i < nodeList.Length; i++) {
+            var node = nodeList[i];
 
             if (node.hasChildren) {
                 continue;
@@ -245,14 +236,15 @@ public class TerrainSystem : MonoBehaviour {
             Gizmos.color = gizmoColor;
             Gizmos.DrawWireCube((float3)(node.bounds.position + node.bounds.size / 2), (float3)node.bounds.size);
         }
+        nodeList.Dispose();
     }
 
-    private void Unload(NativeArray<TreeNode> toUnload) {
-        for (int i = 0; i < toUnload.Length; i++) {
-            TreeNode node = toUnload[i];
+    private void Unload(NativeArray<TreeNode> unloadQueue) {
+        for (int i = 0; i < unloadQueue.Length; i++) {
+            TreeNode node = unloadQueue[i];
 
             if (!_tileMap.ContainsKey(node)) {
-                Debug.LogWarningFormat("Attempting to unload node without active mesh assigned to it: {0}", toUnload[i].bounds);
+                Debug.LogWarningFormat("Attempting to unload node without active mesh assigned to it: {0}", unloadQueue[i].bounds);
                 continue;
             }
 
@@ -270,13 +262,13 @@ public class TerrainSystem : MonoBehaviour {
     /* Todo: Optimize
      * - Run as Burst Job
      */
-    private void Load(NativeArray<TreeNode> toLoad) {
+    private void Load(NativeArray<TreeNode> loadQueue) {
         int numVerts = _tileResolution + 1;
 
-        var streamHandles = new NativeArray<JobHandle>(toLoad.Length, Allocator.Temp, NativeArrayOptions.ClearMemory);
+        var streamHandles = new NativeArray<JobHandle>(loadQueue.Length, Allocator.Temp, NativeArrayOptions.ClearMemory);
 
-        for (int i = 0; i < toLoad.Length; i++) {
-            var node = toLoad[i];
+        for (int i = 0; i < loadQueue.Length; i++) {
+            var node = loadQueue[i];
 
             Debug.Log(string.Format("Loading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
@@ -320,8 +312,8 @@ public class TerrainSystem : MonoBehaviour {
 
         JobHandle.CompleteAll(streamHandles);
 
-        for (int i = 0; i < toLoad.Length; i++) {
-            var node = toLoad[i];
+        for (int i = 0; i < loadQueue.Length; i++) {
+            var node = loadQueue[i];
             var mesh = _tiles[_tileMap[node]];
 
             mesh.HeightMap.Apply(false);
@@ -335,6 +327,8 @@ public class TerrainSystem : MonoBehaviour {
             mesh.gameObject.name = string.Format("Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z);
             mesh.gameObject.SetActive(true);
         }
+
+        streamHandles.Dispose();
     }
 
     private void AllocateNewTileInPool() {
