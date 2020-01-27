@@ -6,6 +6,7 @@ using Unity.Mathematics;
 using Rng = Unity.Mathematics.Random;
 using System.Runtime.CompilerServices;
 using Unity.Collections.LowLevel.Unsafe;
+using System.Runtime.InteropServices;
 
 namespace WavesBurstF32 {
     public struct Tile : System.IDisposable {
@@ -20,16 +21,6 @@ namespace WavesBurstF32 {
         }
     }
 
-    /*
-        Job-system-friendly way to swap buffers, where we swap indices
-        instead of a traditional pointer swap.
-
-        See: struct SwapJob<T> : IJob further below
-
-        The only downside here is that we can no longer tell burst
-        about [ReadOnly] and [WriteOnly] attributes, but let's not
-        worry about that right now.
-    */
     public struct PingPongBuffer<T> : System.IDisposable where T : struct {
         private NativeArray<T> bufferA;
         private NativeArray<T> bufferB;
@@ -58,13 +49,17 @@ namespace WavesBurstF32 {
         // private const int TILE_RES = 16;
         // private const int TILE_NUM = RES / TILE_RES;
 
-        const int NUM_TILES = 2;
+        const int TILES_PER_DIM = 4;
+        const int NUM_TILES = TILES_PER_DIM * TILES_PER_DIM;
 
         const int TICKSPERFRAME = 1;
 
         private Texture2D[] _screenTex;
 
         private uint _tick = 0;
+
+        private FunctionPointer<Indexer> _indexH;
+        private FunctionPointer<Indexer> _indexV;
 
         private void Awake() {
             Application.targetFrameRate = 60;
@@ -80,6 +75,9 @@ namespace WavesBurstF32 {
                 tileTex.filterMode = FilterMode.Point;
                 _screenTex[i] = tileTex;
             }
+
+            _indexH = new FunctionPointer<Indexer>(Marshal.GetFunctionPointerForDelegate((Indexer)PIdxH));
+            _indexV = new FunctionPointer<Indexer>(Marshal.GetFunctionPointerForDelegate((Indexer)PIdxV));
         }
 
         private void OnDestroy() {
@@ -105,29 +103,32 @@ namespace WavesBurstF32 {
             buffIdx0 = (buffIdx0 + 1) % 2;
             buffIdx1 = (buffIdx0 + 1) % 2;
 
-            for (uint i = 0; i < 2; i++) {
-                var octave = _tiles[i];
+            for (uint x = 0; x < TILES_PER_DIM; x++) {
+                for (uint y = 0; y < TILES_PER_DIM; y++) {
+                    uint i = TIdxH(x,y);
+                    var octave = _tiles[i];
 
-                var tileHandle = new JobHandle();
+                    var tileHandle = new JobHandle();
 
-                var impulseJob = new AddImpulseJob
-                {
-                    tick = _tick,
-                    tile = new uint2(i, 0),
-                    curr = octave.buffer.GetBuffer(buffIdx0),
-                };
-                tileHandle = impulseJob.Schedule(tileHandle);
+                    var impulseJob = new AddImpulseJob
+                    {
+                        tick = _tick,
+                        tile = new uint2(x, y),
+                        curr = octave.buffer.GetBuffer(buffIdx0),
+                    };
+                    tileHandle = impulseJob.Schedule(tileHandle);
 
-                var simulateJob = new PropagateJobParallelBatch
-                {
-                    tick = _tick,
-                    config = simConfig,
-                    curr = octave.buffer.GetBuffer(buffIdx0),
-                    next = octave.buffer.GetBuffer(buffIdx1),
-                };
-                tileHandle = simulateJob.ScheduleBatch((RES - 2) * (RES - 2), RES - 2, tileHandle);
+                    var simulateJob = new PropagateTileJob
+                    {
+                        tick = _tick,
+                        config = simConfig,
+                        curr = octave.buffer.GetBuffer(buffIdx0),
+                        next = octave.buffer.GetBuffer(buffIdx1),
+                    };
+                    tileHandle = simulateJob.ScheduleBatch((RES - 2) * (RES - 2), RES - 2, tileHandle);
 
-                handles.Add(tileHandle);
+                    handles.Add(tileHandle);
+                }
             }
 
             JobHandle.CompleteAll(handles);
@@ -137,17 +138,41 @@ namespace WavesBurstF32 {
             each of the verts can handle the same pattern?
             */
 
-            var edgeSimJob = new PropagateEdgeHorizontalJob() {
-                tick = _tick,
-                config = simConfig,
-                l_curr = _tiles[0].buffer.GetBuffer(buffIdx0),
-                r_curr = _tiles[1].buffer.GetBuffer(buffIdx0),
-                l_next = _tiles[0].buffer.GetBuffer(buffIdx1),
-                r_next = _tiles[1].buffer.GetBuffer(buffIdx1),
-            };
-            var edgeHandle = edgeSimJob.ScheduleBatch(RES, RES);
-            edgeHandle.Complete();
+            // Horizontal edge jobs
+            for (int x = 0; x < TILES_PER_DIM-1; x++) {
+                for (int y = 0; y < TILES_PER_DIM; y++) {
+                    var edgeSimJob = new PropagateTileEdgeJob()
+                    {
+                        tick = _tick,
+                        config = simConfig,
+                        a_curr = _tiles[TIdxH(x + 0, y)].buffer.GetBuffer(buffIdx0),
+                        a_next = _tiles[TIdxH(x + 0, y)].buffer.GetBuffer(buffIdx1),
+                        b_curr = _tiles[TIdxH(x + 1, y)].buffer.GetBuffer(buffIdx0),
+                        b_next = _tiles[TIdxH(x + 1, y)].buffer.GetBuffer(buffIdx1),
+                        index = _indexH
+                    };
+                    var edgeHandle = edgeSimJob.ScheduleBatch(RES, RES);
+                    edgeHandle.Complete();
+                }
+            }
 
+            // Vertical edge jobs
+            for (int x = 0; x < TILES_PER_DIM; x++) {
+                for (int y = 0; y < TILES_PER_DIM-1; y++) {
+                    var edgeSimJob = new PropagateTileEdgeVerticalJob()
+                    {
+                        tick = _tick,
+                        config = simConfig,
+                        a_curr = _tiles[TIdxH(x, y + 0)].buffer.GetBuffer(buffIdx0),
+                        a_next = _tiles[TIdxH(x, y + 0)].buffer.GetBuffer(buffIdx1),
+                        b_curr = _tiles[TIdxH(x, y + 1)].buffer.GetBuffer(buffIdx0),
+                        b_next = _tiles[TIdxH(x, y + 1)].buffer.GetBuffer(buffIdx1),
+                    };
+                    var edgeHandle = edgeSimJob.ScheduleBatch(RES, RES);
+                    edgeHandle.Complete();
+                }
+            }
+            
             _tick++;
 
             handles.Clear();
@@ -176,12 +201,20 @@ namespace WavesBurstF32 {
         }
 
         private void OnGUI() {
-            const float scale = 8f;
+            float scale = 4f;
             float size = RES * scale;
             float sizeMinOne = (RES-1) * scale;
 
-            for (int i = 0; i < NUM_TILES; i++) {
-                GUI.DrawTexture(new Rect(i * sizeMinOne, 0f, size, size), _screenTex[i], ScaleMode.ScaleToFit);
+            for (int x = 0; x < TILES_PER_DIM; x++) {
+                for (int y = 0; y < TILES_PER_DIM; y++) {
+                    var rect = new Rect(
+                        x * sizeMinOne,
+                        Screen.height - (y+1) * sizeMinOne,
+                        size,
+                        size);
+
+                    GUI.DrawTexture(rect, _screenTex[TIdxH(x,y)], ScaleMode.ScaleToFit);
+                }
             }
         }
 
@@ -222,7 +255,7 @@ namespace WavesBurstF32 {
 
                             float r = math.sqrt(x * x + y * y);
 
-                            curr[Idx(xIdx, yIdx)] += (
+                            curr[PIdxH(xIdx, yIdx)] += (
                                 math.smoothstep(0f, 1f, 1f - r * radiusScale) *
                                 math.cos(r * (math.PI * 0.1f)) *
                                 amplitude
@@ -306,7 +339,7 @@ namespace WavesBurstF32 {
         }
 
         [BurstCompile]
-        public struct PropagateJobParallelBatch : IJobParallelForBatch {
+        public struct PropagateTileJob : IJobParallelForBatch {
             [ReadOnly] public uint tick;
             [ReadOnly] public SimConfig config;
 
@@ -318,13 +351,13 @@ namespace WavesBurstF32 {
 
                 for (int i = startIndex; i < startIndex + count; i++) {
                     int2 c = new int2(1,1) + Coord(i, RES-2);
-                    int idx = Idx(c.x, c.y);
+                    int idx = PIdxH(c.x, c.y);
 
                     float spatial = config.rSqr * (
-                        curr[Idx(c.x - 1, c.y + 0)] +
-                        curr[Idx(c.x + 1, c.y + 0)] +
-                        curr[Idx(c.x + 0, c.y - 1)] +
-                        curr[Idx(c.x + 0, c.y + 1)] -
+                        curr[PIdxH(c.x - 1, c.y + 0)] +
+                        curr[PIdxH(c.x + 1, c.y + 0)] +
+                        curr[PIdxH(c.x + 0, c.y - 1)] +
+                        curr[PIdxH(c.x + 0, c.y + 1)] -
                         curr[idx] * 4
                     );
 
@@ -353,17 +386,21 @@ namespace WavesBurstF32 {
 
         */
 
+        public delegate int Indexer(int x, int y);
+
         [BurstCompile]
-        public struct PropagateEdgeHorizontalJob : IJobParallelForBatch {
+        public struct PropagateTileEdgeJob : IJobParallelForBatch {
             [ReadOnly] public uint tick;
 
             [ReadOnly] public SimConfig config;
 
-            [ReadOnly] public NativeArray<float> l_curr;
-            [NativeDisableParallelForRestriction] public NativeArray<float> l_next;
+            [ReadOnly] public NativeArray<float> a_curr;
+            [NativeDisableParallelForRestriction] public NativeArray<float> a_next;
 
-            [ReadOnly] public NativeArray<float> r_curr;
-            [NativeDisableParallelForRestriction] public NativeArray<float> r_next;
+            [ReadOnly] public NativeArray<float> b_curr;
+            [NativeDisableParallelForRestriction] public NativeArray<float> b_next;
+
+            [ReadOnly] public FunctionPointer<Indexer> index;
 
             /*
             Implementation note:
@@ -378,24 +415,24 @@ namespace WavesBurstF32 {
             works with odd-numbered resolutions for meshes and textures.
 
             Todo:
-            - Also needs top and bottom for corner pixels...
+            - generalize from left-right to top-bottom setup
+            - pay special attention to corner pixels...
             */
 
             public void Execute(int startIndex, int count) {
-                // Left tile
                 for (int i = 1; i < RES - 1; i++) {
-                    int r_idx = Idx(1       , i);
-                    int l_idx = Idx(RES - 1 , i);
+                    int a_idx = index.Invoke(RES - 1, i);
+                    int b_idx = index.Invoke(1, i);
 
                     float spatial = config.rSqr * (
-                        r_curr[Idx(1      , i + 0)] +
-                        l_curr[Idx(RES - 2, i + 0)] +
-                        l_curr[Idx(RES - 2, i - 1)] +
-                        l_curr[Idx(RES - 2, i + 1)] -
-                        l_curr[l_idx] * 4
+                        b_curr[index.Invoke(1, i + 0)] +
+                        a_curr[index.Invoke(RES - 2, i + 0)] +
+                        a_curr[index.Invoke(RES - 2, i - 1)] +
+                        a_curr[index.Invoke(RES - 2, i + 1)] -
+                        a_curr[a_idx] * 4
                     );
 
-                    float temporal = 2 * l_curr[l_idx] - l_next[l_idx];
+                    float temporal = 2 * a_curr[a_idx] - a_next[a_idx];
 
                     float v = spatial + temporal;
 
@@ -403,8 +440,66 @@ namespace WavesBurstF32 {
                     const float ceiling = 1f;
                     v = math.clamp(v, -ceiling, ceiling);
 
-                    l_next[l_idx] = v;
-                    r_next[Idx(0, i)] = v;
+                    a_next[a_idx] = v;
+                    b_next[index.Invoke(0, i)] = v;
+                }
+            }
+        }
+
+        [BurstCompile]
+        public struct PropagateTileEdgeVerticalJob : IJobParallelForBatch {
+            [ReadOnly] public uint tick;
+
+            [ReadOnly] public SimConfig config;
+
+            [ReadOnly] public NativeArray<float> a_curr;
+            [NativeDisableParallelForRestriction] public NativeArray<float> a_next;
+
+            [ReadOnly] public NativeArray<float> b_curr;
+            [NativeDisableParallelForRestriction] public NativeArray<float> b_next;
+
+            // [ReadOnly] public FunctionPointer<Indexer> index;
+
+            /*
+            Implementation note:
+
+            The idea here is that a line of pixels at the edge of a tile is the same
+            data as the edge on the neighboring tile.
+
+            Why? Joining two tiles with two unfilled edges of data is not possible,
+            as both then see their neighbors edge data as uninitialized.
+
+            This will work out well enough, I think, as the rendering system also
+            works with odd-numbered resolutions for meshes and textures.
+
+            Todo:
+            - generalize from left-right to top-bottom setup
+            - pay special attention to corner pixels...
+            */
+
+            public void Execute(int startIndex, int count) {
+                for (int i = 1; i < RES - 1; i++) {
+                    int a_idx = PIdxH(i, RES - 1);
+                    int b_idx = PIdxH(i, 1);
+
+                    float spatial = config.rSqr * (
+                        b_curr[PIdxH(i + 0, 1)] +
+                        a_curr[PIdxH(i + 0, RES - 2)] +
+                        a_curr[PIdxH(i - 1, RES - 2)] +
+                        a_curr[PIdxH(i + 1, RES - 2)] -
+                        a_curr[a_idx] * 4
+                    );
+
+                    float temporal = 2 * a_curr[a_idx] - a_next[a_idx];
+
+                    float v = spatial + temporal;
+
+                    // Symmetric clamping as a safeguard
+                    const float ceiling = 1f;
+                    v = math.clamp(v, -ceiling, ceiling);
+
+                    a_next[a_idx] = v;
+                    b_next[PIdxH(i, 0)] = v;
                 }
             }
         }
@@ -439,13 +534,22 @@ namespace WavesBurstF32 {
             }
         }
 
+        // Pixel indexing
+
+        // Horizontal pixel indexing
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static int Idx(int x, int y) {
+        private static int PIdxH(int x, int y) {
+            return y * RES + x;
+        }
+
+        // Vertical pixel indexing
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static int PIdxV(int y, int x) {
             return y * RES + x;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static int Idx(int2 v) {
+        private static int PIdxH(int2 v) {
             return v.y * RES + v.x;
         }
 
@@ -457,6 +561,18 @@ namespace WavesBurstF32 {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int2 Coord(int i, int res) {
             return new int2(i % res, i / res);
+        }
+
+        // Tile indexing
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static int TIdxH(int x, int y) {
+            return y * TILES_PER_DIM + x;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static uint TIdxH(uint x, uint y) {
+            return y * TILES_PER_DIM + x;
         }
     }
 }
