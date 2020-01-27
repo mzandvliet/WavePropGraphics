@@ -140,6 +140,7 @@ public class TerrainSystem : MonoBehaviour {
         var lodZeroScale = new int3(_lodZeroScale, _heightScale, _lodZeroScale);
 
         _currVisTree.Clear(new Bounds(bMin, lodZeroScale));
+        var loadedNodes = _tileMap.GetKeyArray(Allocator.TempJob);
         
         var expandTreeJob = new ExpandQuadTreeJob() {
             camInfo = _camInfo,
@@ -150,51 +151,25 @@ public class TerrainSystem : MonoBehaviour {
 
         _lodJobHandle = expandTreeJob.Schedule();
 
+        var unloadDiffJob = new DiffQuadTreesJob() {
+            a = loadedNodes,
+            b = _visibleSet,
+            diff = _unloadQueue
+        };
+
+        var loadDiffJob = new DiffQuadTreesJob() {
+            a = _visibleSet,
+            b = loadedNodes,
+            diff = _loadQueue
+        };
+
+        _lodJobHandle = JobHandle.CombineDependencies(
+            unloadDiffJob.Schedule(_lodJobHandle),
+            loadDiffJob.Schedule(_lodJobHandle)
+        );
         _lodJobHandle.Complete();
 
-        // var currNodes = _currVisibility.Nodes.GetValueArray(Allocator.TempJob);
-        // var lastNodes = _lastVisibility.Nodes.GetValueArray(Allocator.TempJob);
-
-        // var unloadDiffJob = new DiffQuadTreesJob() {
-        //     a = lastNodes,
-        //     b = currNodes,
-        //     diff = _toUnload
-        // };
-
-        // var loadDiffJob = new DiffQuadTreesJob() {
-        //     a = currNodes,
-        //     b = lastNodes,
-        //     diff = _toLoad
-        // };
-
-        var loadedNodes = _tileMap.GetKeyArray(Allocator.TempJob);
-
-        _unloadQueue.Clear();
-        for (int i = 0; i < loadedNodes.Length; i++) {
-            if (!_visibleSet.Contains(loadedNodes[i])) {
-                _unloadQueue.Add(loadedNodes[i]);
-            }
-        }
-
-        _loadQueue.Clear();
-        for (int i = 0; i < _visibleSet.Length; i++) {
-            if (!loadedNodes.Contains(_visibleSet[i])) {
-                _loadQueue.Add(_visibleSet[i]);
-            }
-        }
-
         loadedNodes.Dispose();
-
-        // _lodJobHandle = JobHandle.CombineDependencies(
-        //     unloadDiffJob.Schedule(_lodJobHandle),
-        //     loadDiffJob.Schedule(_lodJobHandle)
-        // );
-        // _lodJobHandle.Complete();
-
-        var temp = _currVisTree;
-        _currVisTree = _lastVisTree;
-        _lastVisTree = temp;
-
     }
 
     private void LateUpdate() {
@@ -209,6 +184,12 @@ public class TerrainSystem : MonoBehaviour {
         Profiler.EndSample();
 
         _camInfo.Dispose();
+    }
+
+    private void SwapTrees() {
+        var temp = _currVisTree;
+        _currVisTree = _lastVisTree;
+        _lastVisTree = temp;
     }
 
     private void OnDrawGizmos() {
@@ -248,7 +229,7 @@ public class TerrainSystem : MonoBehaviour {
                 continue;
             }
 
-            Debug.Log(string.Format("Unloading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
+            // Debug.Log(string.Format("Unloading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
             int idx = _tileMap[node];
             var mesh = _tiles[idx];
@@ -270,7 +251,7 @@ public class TerrainSystem : MonoBehaviour {
         for (int i = 0; i < loadQueue.Length; i++) {
             var node = loadQueue[i];
 
-            Debug.Log(string.Format("Loading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
+            // Debug.Log(string.Format("Loading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
             const float lMin = 2.1f, lMax = 2.9f;
             var lerpRanges = new Vector4(_lodDistances[node.depth] * lMin, _lodDistances[node.depth] * lMax);
