@@ -8,6 +8,13 @@ using System.Runtime.CompilerServices;
 using Unity.Collections.LowLevel.Unsafe;
 using System.Runtime.InteropServices;
 
+/*
+    Todo:
+    
+    Use this to get jobs to run while rest of frame waits for deltaTime?
+    https://docs.unity3d.com/2018.1/Documentation/ScriptReference/Experimental.LowLevel.PlayerLoopSystem.html
+*/
+
 namespace WavesBurstF32 {
     public struct Tile : System.IDisposable {
         public PingPongBuffer<float> buffer;
@@ -45,11 +52,9 @@ namespace WavesBurstF32 {
     public class WavePropagationFloat32 : MonoBehaviour {
         private Tile[] _tiles;
 
-        private const int RES = 32; // current limiting factor: if we set this too big we create cache misses
-        // private const int TILE_RES = 16;
-        // private const int TILE_NUM = RES / TILE_RES;
+        private const int RES = 32;
 
-        const int TILES_PER_DIM = 4;
+        const int TILES_PER_DIM = 16;
         const int NUM_TILES = TILES_PER_DIM * TILES_PER_DIM;
 
         const int TICKSPERFRAME = 1;
@@ -88,9 +93,10 @@ namespace WavesBurstF32 {
 
         private int buffIdx0 = 0;
         private int buffIdx1 = 1;
+        private JobHandle _updateHandle;
 
         private void Update() {
-            var handles = new NativeList<JobHandle>(2, Allocator.Temp);
+            var handles = new NativeList<JobHandle>(NUM_TILES * 4, Allocator.Temp);
 
             var scaleFactor = 1f;
             var simConfig = new SimConfig(
@@ -131,12 +137,8 @@ namespace WavesBurstF32 {
                 }
             }
 
-            JobHandle.CompleteAll(handles);
-
-            /* 
-            Todo: iterate over dual grid between the tiles
-            each of the verts can handle the same pattern?
-            */
+            var tileSimHandle = JobHandle.CombineDependencies(handles);
+            handles.Clear();
 
             // Horizontal edge jobs
             for (int x = 0; x < TILES_PER_DIM-1; x++) {
@@ -151,8 +153,8 @@ namespace WavesBurstF32 {
                         b_next = _tiles[TIdxH(x + 1, y)].buffer.GetBuffer(buffIdx1),
                         index = _indexH
                     };
-                    var edgeHandle = edgeSimJob.ScheduleBatch(RES, RES);
-                    edgeHandle.Complete();
+                    var edgeHandle = edgeSimJob.ScheduleBatch(RES, RES, tileSimHandle);
+                    handles.Add(edgeHandle);
                 }
             }
 
@@ -168,13 +170,14 @@ namespace WavesBurstF32 {
                         b_curr = _tiles[TIdxH(x, y + 1)].buffer.GetBuffer(buffIdx0),
                         b_next = _tiles[TIdxH(x, y + 1)].buffer.GetBuffer(buffIdx1),
                     };
-                    var edgeHandle = edgeSimJob.ScheduleBatch(RES, RES);
-                    edgeHandle.Complete();
+                    var edgeHandle = edgeSimJob.ScheduleBatch(RES, RES, tileSimHandle);
+                    handles.Add(edgeHandle);
                 }
             }
             
             _tick++;
 
+            var edgeSimHandle = JobHandle.CombineDependencies(handles);
             handles.Clear();
 
             for (int i = 0; i < NUM_TILES; i++) {
@@ -185,23 +188,25 @@ namespace WavesBurstF32 {
                     buf = waveData,
                     texture = texture
                 };
-                var renderHandle = renderJob.Schedule(RES * RES, 32);
+                var renderHandle = renderJob.Schedule(RES * RES, 32, edgeSimHandle);
                 handles.Add(renderHandle);
             }
 
-            JobHandle.CompleteAll(handles);
+            _updateHandle = JobHandle.CombineDependencies(handles);
 
             handles.Dispose();
         }
 
         private void LateUpdate() {
+            _updateHandle.Complete();
+
             for (int i = 0; i < NUM_TILES; i++) {
                 _screenTex[i].Apply(false);
             }
         }
 
         private void OnGUI() {
-            float scale = 4f;
+            float scale = 2f;
             float size = RES * scale;
             float sizeMinOne = (RES-1) * scale;
 
