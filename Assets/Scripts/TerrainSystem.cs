@@ -227,7 +227,8 @@ public class TerrainSystem : MonoBehaviour {
 
         GUILayout.BeginVertical(GUI.skin.box);
         {
-            GUILayout.Label("Visible gpu tiles: " + _tileMap.Length);
+            GUILayout.Label(string.Format("Domain Extents: {0}", _lodZeroScale));
+            GUILayout.Label(string.Format("Visible gpu tiles: {0}", _tileMap.Length));
         }
         GUILayout.EndVertical();
     }
@@ -402,7 +403,7 @@ public class TerrainSystem : MonoBehaviour {
             // Todo: calculate job-constant data on main thread instead of per pixel
 
             float stepSize = bounds.size.x / (float)(numVerts - 1);
-            float delta = stepSize * 0.001f;
+            float delta = stepSize * 0.1f;
 
             int x = idx % numVerts;
             int z = idx / numVerts;
@@ -439,56 +440,4 @@ public class TerrainSystem : MonoBehaviour {
 public interface IHeightSampler {
     float HeightScale { get; }
     float Sample(float x, float z);
-}
-
-// public struct HeightSampler : IHeightSampler {
-//     private float _heightScale;
-
-//     public float HeightScale {
-//         get { return _heightScale; }
-//     }
-
-//     public HeightSampler(float heightScale) {
-//         _heightScale = heightScale;
-//     }
-
-//     /// Generates height values in normalized float range, [0,1]
-//     public float Sample(float x, float z) {
-//         float h = 0f;
-
-//         for (int i = 0; i < 10; i++) {
-//             h += 
-//                 (0.5f + Mathf.Sin(0.73197f * ((i+1)*11) + (x * Mathf.PI) * 0.001093f * (i+1)) * 0.5f) *
-//                 (0.5f + Mathf.Cos(-1.1192f * ((i+1) *17) + (z * Mathf.PI) * 0.001317f * (i+1)) * 0.5f) *
-//                 (0.5f / (float)(1+i*2));
-//         }
-
-//         return h;
-//     }
-// }
-
-public struct HeightSampler : IHeightSampler {
-    private float _heightScale;
-
-    public float HeightScale {
-        get { return _heightScale; }
-    }
-
-    public HeightSampler(float heightScale) {
-        _heightScale = heightScale;
-    }
-
-    /// Generates height values in normalized float range, [0,1]
-    public float Sample(float x, float z) {
-        float h = 0f;
-
-        for (int i = 0; i < 10; i++) {
-            h +=
-                (0.5f + Mathf.Sin(0.73197f * ((i + 1) * 11) + (x * Mathf.PI) * 0.001093f * (i + 1)) * 0.5f) *
-                (0.5f + Mathf.Cos(-1.1192f * ((i + 1) * 17) + (z * Mathf.PI) * 0.001317f * (i + 1)) * 0.5f) *
-                (0.5f / (float)(1 + i * 2));
-        }
-
-        return h;
-    }
 }

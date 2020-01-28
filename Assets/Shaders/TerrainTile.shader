@@ -79,9 +79,14 @@ Shader "Custom/Terrain/TerrainTile" {
 				return (c.r * 256 + c.g) / 257.0;
 			}
 
-			half3 UnpackNormalCustom(float4 c) {
-				half3 n = (c.xyz * 2.0) - float3(1,1,1);
-				n.z = sqrt(1 - n.x * n.x - n.y * n.y);
+			half3 UnpackNormalCustom(half3 c) {
+				// half3 n = (c.xyz * 2.0) - half3(1,1,1);
+				// n.z = sqrt(1 - n.x * n.x - n.y * n.y);
+				// return normalize(n);
+
+				half3 n;
+				n.xy = c.xy * 2.0 - 1.0;
+				n.z = sqrt(1.0 - saturate(dot(n.xy, n.xy)));
 				return normalize(n);
 			}
 
@@ -136,6 +141,7 @@ Shader "Custom/Terrain/TerrainTile" {
 			half4 frag(v2f i) : COLOR {
 				half3 L = normalize(_WorldSpaceLightPos0.xyz);
 
+				// half3 worldNormal = float3(0,1,0);
 				// half3 worldNormal = normalize(i.worldNormal);
 				half3 worldNormal = UnpackNormalCustom(tex2D(_NormalTex, i.uv2));
 
@@ -167,6 +173,9 @@ Shader "Custom/Terrain/TerrainTile" {
 
 				half4 diffuse = tex2D(_MainTex, i.uv1) * _MainColor;
 				half4 finalColor = (ambient + diffuseTerm) * diffuse * shadow + skyColor * 0.7;
+
+				// Normal debugging
+				// half4 finalColor = half4(0.5 + 0.5 * UnpackNormalCustom(tex2D(_NormalTex, i.uv2)), 1);
 
 				return finalColor;
 			}
