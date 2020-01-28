@@ -9,10 +9,10 @@ using Unity.Collections.LowLevel.Unsafe;
 
 namespace Waves {
     public struct Octave : System.IDisposable {
-        public PingPongBuffer<float> buffer;
+        public DoubleDuffer<float> buffer;
 
-        public Octave(int resolution, int ticksPerFrame) {
-            buffer = new PingPongBuffer<float>(resolution * resolution, Allocator.Persistent);
+        public Octave(int resolution, int ticksPerFrame, Allocator allocator) {
+            buffer = new DoubleDuffer<float>(resolution * resolution, allocator);
         }
 
         public void Dispose() {
@@ -20,25 +20,15 @@ namespace Waves {
         }
     }
 
-    /*
-        Job-system-friendly way to swap buffers, where we swap indices
-        instead of a traditional pointer swap.
-
-        See: struct SwapJob<T> : IJob further below
-
-        The only downside here is that we can no longer tell burst
-        about [ReadOnly] and [WriteOnly] attributes, but let's not
-        worry about that right now.
-    */
-    public struct PingPongBuffer<T> : System.IDisposable where T : struct {
+    public struct DoubleDuffer<T> : System.IDisposable where T : struct {
         private NativeArray<T> bufferA;
         private NativeArray<T> bufferB;
 
         public int Length { get => bufferA.Length; }
 
-        public PingPongBuffer(int resolution, Allocator allocator) {
-            bufferA = new NativeArray<T>(resolution, allocator);
-            bufferB = new NativeArray<T>(resolution, allocator);
+        public DoubleDuffer(int resolution, Allocator allocator) {
+            bufferA = new NativeArray<T>(resolution, allocator, NativeArrayOptions.ClearMemory);
+            bufferB = new NativeArray<T>(resolution, allocator, NativeArrayOptions.ClearMemory);
         }
 
         public NativeArray<T> GetBuffer(int idx) {
@@ -71,7 +61,12 @@ namespace Waves {
         Todo: respect tileMap indirection, worldshifting, etc.
         */
         public float Sample(float x, float z) {
-            const float horScale = 1f / 8f;
+            const float offset = (float)-(32768 / 2);
+            const float horScale = 1f / 128f;
+
+            x -= offset;
+            z -= offset;
+
             x *= horScale;
             z *= horScale;
 
@@ -79,11 +74,11 @@ namespace Waves {
             int zFloor = (int)math.floor(z);
 
             // Clamp?
-            // xFloor = math.clamp(xFloor, 0, WaveSimulator.RES);
-            // zFloor = math.clamp(zFloor, 0, WaveSimulator.RES);
+            // xFloor = math.clamp(xFloor, 0, WaveSimulator.RES-2);
+            // zFloor = math.clamp(zFloor, 0, WaveSimulator.RES-2);
 
             if (xFloor < 0 || xFloor >= WaveSimulator.RES-1 || zFloor < 0 || zFloor >= WaveSimulator.RES-1) {
-                return 0f;
+                return 0.5f;
             }
 
             float xFrac = x - (float)xFloor;
@@ -99,11 +94,13 @@ namespace Waves {
             float tl_sample = buffer[tl_idx];
             float tr_sample = buffer[tr_idx];
 
-            return math.lerp(
+            float height = math.lerp(
                 math.lerp(bl_sample, br_sample, xFrac),
                 math.lerp(tl_sample, tr_sample, xFrac),
                 zFrac
             );
+
+            return 0.5f + 0.5f * height;
         }
     }
 
@@ -130,7 +127,7 @@ namespace Waves {
         public WaveSimulator(float heightScale) {
             _heightScale = heightScale;
             
-            _octave = new Octave(RES, TICKSPERFRAME);
+            _octave = new Octave(RES, TICKSPERFRAME, Allocator.Persistent);
             _tileMap = new NativeArray<int>(TILES_PER_DIM * TILES_PER_DIM, Allocator.Persistent);
 
             _screenTex = new Texture2D(RES, RES, TextureFormat.RG16, false, true);
@@ -157,7 +154,7 @@ namespace Waves {
         private int buffIdx1 = 1;
 
         public void StartUpdate() {
-            var scaleFactor = 1f;
+            var scaleFactor = 02f;
             var simConfig = new SimConfig(
                 scaleFactor,            // double per octave
                 0.15f * scaleFactor,    // dcd
@@ -170,21 +167,30 @@ namespace Waves {
                 buffIdx0 = (buffIdx0 + 1) % 2;
                 buffIdx1 = (buffIdx0 + 1) % 2;
 
-                var impulseJob = new AddImpulseJob
+                var impulseJob = new AddRandomImpulsesJob
                 {
                     tick = _tick,
                     curr = _octave.buffer.GetBuffer(buffIdx0),
+                    prev = _octave.buffer.GetBuffer(buffIdx1),
                 };
                 simHandle = impulseJob.Schedule(simHandle);
 
-                var simulateJob = new PropagateJobParallelBatch
+                var simTileJob = new PropagateJob
                 {
                     config = simConfig,
                     tick = _tick,
                     curr = _octave.buffer.GetBuffer(buffIdx0),
                     next = _octave.buffer.GetBuffer(buffIdx1),
                 };
-                simHandle = simulateJob.ScheduleBatch((RES-2) * (RES-2), RES-2, simHandle);
+                simHandle = simTileJob.ScheduleBatch((RES-2) * (RES-2), RES-2, simHandle);
+
+                var simBoundsJob = new PropagateBoundariesJob {
+                    config = simConfig,
+                    tick = _tick,
+                    curr = _octave.buffer.GetBuffer(buffIdx0),
+                    next = _octave.buffer.GetBuffer(buffIdx1),
+                };
+                simHandle = simBoundsJob.Schedule(simHandle);
 
                 _tick++;
             }
@@ -212,7 +218,7 @@ namespace Waves {
         }
 
         public void OnDrawGUI() {
-            float size = math.min(Screen.width, Screen.height);
+            float size = math.min(Screen.width, Screen.height) * 0.5f;
             GUI.DrawTexture(new Rect(0f, 0f, size, size), _screenTex, ScaleMode.ScaleToFit);
         }
 
@@ -244,13 +250,15 @@ namespace Waves {
         }
 
         [BurstCompile]
-        public struct AddImpulseJob : IJob {
+        public struct AddRandomImpulsesJob : IJob {
+            public NativeArray<float> prev;
             public NativeArray<float> curr;
             public uint tick;
 
             public void Execute() {
                 /*
                  Todo: 
+                 - Ensure smoothness at given scale and resolution
                  - Still shows square-ish artifacts
                  - Fixed point arithmetic instead of float?
                 */
@@ -262,9 +270,10 @@ namespace Waves {
 
                 int2 pos = new int2(rng.NextInt(RES), rng.NextInt(RES));
 
-                int radius = 15 + rng.NextInt(6) * rng.NextInt(6); // odd-numbered radius
-                float amplitude = rng.NextFloat(-0.25f, 0.25f);
-                float radiusScale = math.PI * 2f / (float)radius;
+                int radius = 31 + 2*(rng.NextInt(5) * rng.NextInt(5)); // odd-numbered radius
+                float amplitude = rng.NextFloat(-0.5f, 0.5f);
+                float radiusInv = 1f / (float)(radius-1);
+                float rippleFreq = (math.PI * 2f * 0.02f);
 
                 const int impulsePeriod = 16;
                 if (tick == 0 || rng.NextInt(impulsePeriod) == 0) {
@@ -278,12 +287,14 @@ namespace Waves {
                             }
 
                             float r = math.sqrt(x * x + y * y);
+                            float interp = math.smoothstep(1f, 0f, r * radiusInv);
+                            int idx = Idx(xIdx, yIdx);
 
-                            curr[Idx(xIdx, yIdx)] += (
-                                math.smoothstep(0f, 1f, 1f - r * radiusScale) *
-                                math.cos(r * (math.PI * 0.1f)) *
-                                amplitude
-                            );
+                            curr[idx] += 
+                                math.cos(r * rippleFreq) * interp * amplitude
+                            ;
+
+                            prev[idx] = math.lerp(prev[idx], curr[idx], 0.75f);
                         }
                     }
                 }
@@ -336,7 +347,7 @@ namespace Waves {
         */
 
         [BurstCompile]
-        public struct PropagateJobParallelBatch : IJobParallelForBatch {
+        public struct PropagateJob : IJobParallelForBatch {
             [ReadOnly] public SimConfig config;
 
             [ReadOnly] public uint tick;
@@ -344,6 +355,7 @@ namespace Waves {
             [NativeDisableParallelForRestriction] public NativeArray<float> next;
 
             public void Execute(int startIndex, int count) {
+                // Inner part
                 for (int i = startIndex; i < startIndex + count; i++) {
                     int2 c = new int2(1,1) + Coord(i, RES-2);
                     int idx = Idx(c.x, c.y);
@@ -369,6 +381,87 @@ namespace Waves {
             }
         }
 
+        [BurstCompile]
+        public struct PropagateBoundariesJob : IJob {
+            [ReadOnly] public SimConfig config;
+
+            [ReadOnly] public uint tick;
+            [ReadOnly] public NativeArray<float> curr;
+            [NativeDisableParallelForRestriction] public NativeArray<float> next;
+
+            public void Execute() {
+                // Open boundary condition
+
+                // Bottom
+                for (int i = 0; i < RES - 1; i++) {
+                    int2 c = new int2(i, 0);
+                    int idx = Idx(c.x, c.y);
+
+                    float v = (
+                        2f * curr[idx] + config.rMinusOne * next[idx] +
+                        config.rSqrx2 * (curr[Idx(c.x, c.y + 1)] - curr[idx])
+                    ) / config.rPlusOne;
+
+                    // Symmetric clamping as a safeguard
+                    const float ceiling = 1f;
+                    v = math.clamp(v, -ceiling, ceiling);
+
+                    next[idx] = v;
+                }
+
+                // Top
+                for (int i = 1; i < RES; i++) {
+                    int2 c = new int2(i, RES - 1);
+                    int idx = Idx(c.x, c.y);
+
+                    float v = (
+                        2f * curr[idx] + config.rMinusOne * next[idx] +
+                        config.rSqrx2 * (curr[Idx(c.x, c.y - 1)] - curr[idx])
+                    ) / config.rPlusOne;
+
+                    // Symmetric clamping as a safeguard
+                    const float ceiling = 1f;
+                    v = math.clamp(v, -ceiling, ceiling);
+
+                    next[idx] = v;
+                }
+
+                // Left
+                for (int i = 0; i < RES - 1; i++) {
+                    int2 c = new int2(0, i);
+                    int idx = Idx(c.x, c.y);
+
+                    float v = (
+                        2f * curr[idx] + config.rMinusOne * next[idx] +
+                        config.rSqrx2 * (curr[Idx(c.x + 1, c.y)] - curr[idx])
+                    ) / config.rPlusOne;
+
+                    // Symmetric clamping as a safeguard
+                    const float ceiling = 1f;
+                    v = math.clamp(v, -ceiling, ceiling);
+
+                    next[idx] = v;
+                }
+
+                // Right
+                for (int i = 1; i < RES; i++) {
+                    int2 c = new int2(RES - 1, i);
+                    int idx = Idx(c.x, c.y);
+
+                    float v = (
+                        2f * curr[idx] + config.rMinusOne * next[idx] +
+                        config.rSqrx2 * (curr[Idx(c.x - 1, c.y)] - curr[idx])
+                    ) / config.rPlusOne;
+
+                    // Symmetric clamping as a safeguard
+                    const float ceiling = 0.95f;
+                    v = math.clamp(v, -ceiling, ceiling);
+
+                    next[idx] = v;
+                }
+            }
+        }
+
         public struct byte2 {
             public byte r;
             public byte g;
@@ -387,18 +480,22 @@ namespace Waves {
             public void Execute(int i) {
                 int2 c = Coord(i);
                 int idx = Idx(c.x, c.y);
-
                 float sample = buf[idx];
 
-                var scaled = (sample * 256f);
-                var pos = math.clamp(scaled, 0, 256f);
-                var neg = math.clamp(-scaled, 0, 256f);
+                // var scaled = (sample * 256f);
+                // var pos = math.clamp(scaled, 0, 256f);
+                // var neg = math.clamp(-scaled, 0, 256f);
+                // var color = new byte2(
+                //     (byte)neg,
+                //     (byte)pos
+                // );
 
-                var pressureColor = new byte2(
-                    (byte)neg,
-                    (byte)pos
+                var color = new byte2(
+                    (byte) ((0.5f + 0.5f * sample) * 255f),
+                    0
                 );
-                texture[i] = pressureColor;
+
+                texture[i] = color;
             }
         }
 

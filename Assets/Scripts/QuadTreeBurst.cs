@@ -188,8 +188,8 @@ public struct Tree : System.IDisposable {
         over all the data anyway.
         */
 
-        int lowest = bounds.position.y;
-        int highest = bounds.position.y + bounds.size.y;
+        int lowest = 999;
+        int highest = -1;
 
         const int samplingResolution = 4;
 

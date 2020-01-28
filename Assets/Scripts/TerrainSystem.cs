@@ -52,12 +52,13 @@ public struct byte2 {
 public class TerrainSystem : MonoBehaviour {
     [SerializeField] private Material _material;
     [SerializeField] private Camera _camera;
+    [SerializeField] private bool _showWaveDebugData = false;
     [SerializeField] private int _lodZeroScale = 4096;
     [SerializeField] private int _tileResolution = 16;
     [SerializeField] private int _numLods = 10;
     [SerializeField] private int _lodZeroRange = 32;
 
-    private const int WaveHeightScale = 128;
+    private const int WaveHeightScale = 512;
 
     private NativeArray<float> _lodDistances;
 
@@ -211,6 +212,24 @@ public class TerrainSystem : MonoBehaviour {
         var temp = _currVisTree;
         _currVisTree = _lastVisTree;
         _lastVisTree = temp;
+    }
+
+    private void OnGUI() {
+        if (!Application.isPlaying) {
+            return;
+        }
+        
+        if (_showWaveDebugData) {
+            _waves.StartRender();
+            _waves.CompleteRender();
+            _waves.OnDrawGUI();
+        }
+
+        GUILayout.BeginVertical(GUI.skin.box);
+        {
+            GUILayout.Label("Visible gpu tiles: " + _tileMap.Length);
+        }
+        GUILayout.EndVertical();
     }
 
     private void OnDrawGizmos() {
@@ -378,14 +397,12 @@ public class TerrainSystem : MonoBehaviour {
         public int numVerts;
         public WaveSampler sampler;
         public Bounds bounds;
-
-
         
         public void Execute(int idx) {
             // Todo: calculate job-constant data on main thread instead of per pixel
 
             float stepSize = bounds.size.x / (float)(numVerts - 1);
-            float delta = stepSize * 0.1f;
+            float delta = stepSize * 0.001f;
 
             int x = idx % numVerts;
             int z = idx / numVerts;

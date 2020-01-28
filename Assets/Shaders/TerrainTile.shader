@@ -126,7 +126,7 @@ Shader "Custom/Terrain/TerrainTile" {
 				// To clip space
 				o.worldPos = wsVertex;
 				o.pos = mul(UNITY_MATRIX_VP, wsVertex);
-				o.worldNormal = UnpackNormalCustom(tex2Dlod(_NormalTex, float4(morphedVertex, 0,0)));
+				// o.worldNormal = UnpackNormalCustom(tex2Dlod(_NormalTex, float4(morphedVertex, 0,0)));
 
 				TRANSFER_SHADOW(o)
 
@@ -136,8 +136,8 @@ Shader "Custom/Terrain/TerrainTile" {
 			half4 frag(v2f i) : COLOR {
 				half3 L = normalize(_WorldSpaceLightPos0.xyz);
 
-				half3 worldNormal = normalize(i.worldNormal);
-				// half3 worldNormal = UnpackNormalCustom(tex2D(_NormalTex, i.uv2));
+				// half3 worldNormal = normalize(i.worldNormal);
+				half3 worldNormal = UnpackNormalCustom(tex2D(_NormalTex, i.uv2));
 
 				// const float heightScale = 512.0; // Todo: parameterize
 				// const float2 step = float2(0.0,0.05);

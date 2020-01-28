@@ -3,6 +3,7 @@ using System.Collections;
 
 public class Player : MonoBehaviour {
     [SerializeField] private Camera _camera;
+    [SerializeField] private float _flySpeed = 400f;
 
     private void Awake() {
         if (!_camera) {
@@ -20,7 +21,10 @@ public class Player : MonoBehaviour {
 
         transform.Rotate(0f, inputX * 120f * Time.deltaTime, 0f, Space.World);
         transform.Rotate(inputY * -120f * Time.deltaTime, 0f, 0f, Space.Self);
-	    transform.Translate(inputHorizontal * 200f * Time.deltaTime, 0f, inputVertical * 200f * Time.deltaTime, Space.Self);
+	    transform.Translate(
+            inputHorizontal * _flySpeed * Time.deltaTime, 
+            0f,
+            inputVertical * _flySpeed * Time.deltaTime, Space.Self);
 
 	    if (Input.GetKeyDown(KeyCode.Space)) {
 	        _wireframe = !_wireframe;
