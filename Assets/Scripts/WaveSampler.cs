@@ -16,36 +16,33 @@ public struct WaveSampler {
     /*
     Slow, naive, ad-hoc sampling function
 
-    Generates height values in normalized float range, [0,1]
+    Generates height values in normalized float range, [-1,1]
     x,y are in world units, meters
 
     Todo: respect tileMap indirection, worldshifting, etc.
     */
     public float3 Sample(float x, float z) {
-        const float offset = (float)(32768 / 2);
         const float horScale = 1f / 64f;
-
-        x += offset;
-        z += offset;
+        const float offset = (float)((32768 / 2) * horScale);
 
         x *= horScale;
         z *= horScale;
 
+        x += offset;
+        z += offset;
+
         int xFloor = (int)math.floor(x);
         int zFloor = (int)math.floor(z);
-
-        // Clamp?
-        // xFloor = math.clamp(xFloor, 0, WaveSimulator.RES-2);
-        // zFloor = math.clamp(zFloor, 0, WaveSimulator.RES-2);
 
         if (xFloor < 1 || xFloor >= WaveSimulator.RES - 2 || zFloor < 1 || zFloor >= WaveSimulator.RES - 2) {
             return 0.5f;
         }
 
-        float xFrac = x - (float)xFloor;
-        float zFrac = z - (float)zFloor;
+        // float xFrac = x - (float)xFloor;
+        // float zFrac = z - (float)zFloor;
 
-        var samples = new NativeArray<float4>(4, Allocator.Temp);
+        float xFrac = math.frac(x);
+        float zFrac = math.frac(z);
 
         /* Todo:
         -generate this address sequence more efficiently
@@ -64,18 +61,37 @@ public struct WaveSampler {
         Then, the surface system no longer has to do its own
         bilinear filtering, and the whole thing is better.
         */
-        for (int zk = -1; zk < 3; zk++) {
-            samples[1 + zk] = new float4(
-                buffer[WaveSimulator.Idx(xFloor - 1, zFloor + zk)],
-                buffer[WaveSimulator.Idx(xFloor + 0, zFloor + zk)],
-                buffer[WaveSimulator.Idx(xFloor + 1, zFloor + zk)],
-                buffer[WaveSimulator.Idx(xFloor + 2, zFloor + zk)]
-            );
-        }
+        // var samples = new NativeArray<float4>(4, Allocator.Temp);
+        // for (int zk = -1; zk < 3; zk++) {
+        //     samples[1 + zk] = new float4(
+        //         buffer[WaveSimulator.Idx(xFloor - 1, zFloor + zk)],
+        //         buffer[WaveSimulator.Idx(xFloor + 0, zFloor + zk)],
+        //         buffer[WaveSimulator.Idx(xFloor + 1, zFloor + zk)],
+        //         buffer[WaveSimulator.Idx(xFloor + 2, zFloor + zk)]
+        //     );
+        // }
+
+        // float height = buffer[WaveSimulator.Idx(xFloor, zFloor)]; // simple nearest-neighbor test
 
         // float height = Erp.BiLerp3(samples, xFrac, zFrac);
-        float height = Erp.BiLerp3_sympy(samples, zFrac, xFrac);
-        float2 tangents = Erp.BiLerp3_deriv_sympy(samples, zFrac, xFrac);
+        // float2 tangents = Erp.BiLerp3_Grad(samples, xFrac, zFrac);
+
+        // float height = Erp.BiLerp3_sympy(samples, zFrac, xFrac);
+        // float2 tangents = Erp.BiLerp3_Grad_sympy(samples, zFrac, xFrac);
+
+        var b = new float2(
+             buffer[WaveSimulator.Idx(xFloor, zFloor)],
+             buffer[WaveSimulator.Idx(xFloor + 1, zFloor)]
+        );
+        var t = new float2(
+             buffer[WaveSimulator.Idx(xFloor, zFloor + 1)],
+             buffer[WaveSimulator.Idx(xFloor + 1, zFloor + 1)]
+        );
+
+        float height = Erp.BiLerp(b, t, new float2(xFrac, zFrac));
+        float2 tangents = new float2(
+            b.y - b.x,
+            t.x - b.x);
 
         return new float3(height, tangents);
     }
@@ -104,7 +120,7 @@ public static class Erp {
     }
 
 
-    public static float Lerp3_deriv(float4 p, float x) {
+    public static float Lerp3_Grad(float4 p, float x) {
         /*----------------terms-------------------*/
 
         float a0 = (-1.0f / 2.0f) * p[0];
@@ -116,21 +132,21 @@ public static class Erp {
         return output_0;
     }
 
-    public static float2 BiLerp3_deriv(NativeSlice<float4> p, float x, float z) {
+    public static float2 BiLerp3_Grad(NativeSlice<float4> p, float x, float z) {
         float4 arr = new float4();
-        arr[0] = Lerp3(p[0], x);
-        arr[1] = Lerp3(p[1], x);
-        arr[2] = Lerp3(p[2], x);
-        arr[3] = Lerp3(p[3], x);
+        arr[0] = Lerp3_Grad(p[0], x);
+        arr[1] = Lerp3_Grad(p[1], x);
+        arr[2] = Lerp3_Grad(p[2], x);
+        arr[3] = Lerp3_Grad(p[3], x);
 
-        float dz = Lerp3_deriv(arr, z);
+        float dx = Lerp3(arr, z);
 
-        arr[0] = Lerp3(new float4(p[0][0], p[1][0], p[2][0], p[3][0]), z);
-        arr[1] = Lerp3(new float4(p[0][1], p[1][1], p[2][1], p[3][1]), z);
-        arr[2] = Lerp3(new float4(p[0][2], p[1][2], p[2][2], p[3][2]), z);
-        arr[3] = Lerp3(new float4(p[0][3], p[1][3], p[2][3], p[3][3]), z);
+        arr[0] = Lerp3_Grad(new float4(p[0][0], p[1][0], p[2][0], p[3][0]), z);
+        arr[1] = Lerp3_Grad(new float4(p[0][1], p[1][1], p[2][1], p[3][1]), z);
+        arr[2] = Lerp3_Grad(new float4(p[0][2], p[1][2], p[2][2], p[3][2]), z);
+        arr[3] = Lerp3_Grad(new float4(p[0][3], p[1][3], p[2][3], p[3][3]), z);
 
-        float dx = Lerp3_deriv(arr, x);
+        float dz = Lerp3(arr, x);
 
         return new float2(dx, dz);
     }
@@ -175,7 +191,7 @@ public static class Erp {
         return output_0;
     }
 
-    public static float2 BiLerp3_deriv_sympy(NativeSlice<float4> p, float u, float v) {
+    public static float2 BiLerp3_Grad_sympy(NativeSlice<float4> p, float u, float v) {
 
         /*----------------terms-------------------*/
 

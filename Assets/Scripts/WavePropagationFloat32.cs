@@ -198,7 +198,7 @@ namespace Waves {
                     pos = (int2)(hitInfo.p.xz),
                     strength = strength,
                     radius = 15 + 2 * ((int)math.round(strength * 8f)), // odd-numbered radius
-                    frequency = (math.PI * 2f * 0.025f),
+                    frequency = (math.PI * 2f * 0.1f),
                     amplitude = rng.NextFloat(0.3f, 0.5f) * strength,
                 });
             }
@@ -388,7 +388,7 @@ namespace Waves {
                         pos = new int2(rng.NextInt(RES), rng.NextInt(RES / 3)),
                         strength = strength,
                         radius = 7 + 2 * ((int)math.round(strength * 16f)), // odd-numbered radius
-                        frequency = (math.PI * 2f * 0.025f),
+                        frequency = (math.PI * 2f * 0.01f),
                         amplitude = rng.NextFloat(-0.5f, 0.5f) * strength,
                     });
                 }
@@ -412,7 +412,7 @@ namespace Waves {
                  - Fixed point arithmetic instead of float?
                 */
 
-                        for (int i = 0; i < perturbations.Length; i++) {
+                for (int i = 0; i < perturbations.Length; i++) {
                     var p = perturbations[i];
 
                     for (int y = -p.radius; y <= p.radius; y++) {
@@ -439,8 +439,8 @@ namespace Waves {
                             last wave state. Bringing the past in line with the present,
                             and preventing some discontinuities.
                             */
-                            curr[idx] = curr[idx] + perturb * 0.66f;
-                            prev[idx] = prev[idx] + perturb * 0.33f;
+                            curr[idx] = curr[idx] + perturb * 0.5f;
+                            prev[idx] = prev[idx] + perturb * 0.4f;
                         }
                     }
                 }
@@ -506,10 +506,13 @@ namespace Waves {
             [WriteOnly, NativeDisableContainerSafetyRestriction]
             public NativeArray<float2> heightBounds;
 
-            // Todo: want to track min/max height bounds for this local tile, such
-            // that we can build up a quad-tree for efficiently sampling rays
-
             public void Execute(int index) {
+                /*
+                Performs finite differencing update for wave propagation
+                Also tracks the tile's min and max height values, which
+                are valuable to consumers of the wave data.
+                */
+
                 int2 tile = tileMap[index];
                 // int tileAddr = TileAddr(tile.x, tile.y); // Todo: use cached tile address
                 int2 tileBase = tile * TILE_RES;
@@ -541,7 +544,7 @@ namespace Waves {
                         float v = spatial + temporal;
 
                         // Symmetric clamping as a safeguard
-                        const float ceiling = .999f;
+                        const float ceiling = .9f;
                         v = math.clamp(v, -ceiling, ceiling);
 
                         next[idx] = v;

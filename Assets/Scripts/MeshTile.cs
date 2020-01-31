@@ -66,7 +66,7 @@ public class MeshTile : MonoBehaviour {
         
         CreateMesh(resolution);
 
-        _heightMap = new Texture2D(resolution + 1, resolution + 1, TextureFormat.RG16, false, true);
+        _heightMap = new Texture2D(resolution + 1, resolution + 1, TextureFormat.R16, false, true);
         _normalMap = new Texture2D(resolution + 1, resolution + 1, TextureFormat.RGFloat, true, true); // Todo: use RGHalf?
         _heightMap.wrapMode = TextureWrapMode.Clamp;
         _normalMap.wrapMode = TextureWrapMode.Clamp;
@@ -121,8 +121,8 @@ public class MeshTile : MonoBehaviour {
             new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3)
         );
 
-        var updateFlags = MeshUpdateFlags.Default;
-        // var updateFlags = MeshUpdateFlags.DontValidateIndices; // Saves on compute
+        // var updateFlags = MeshUpdateFlags.Default;
+        var updateFlags = MeshUpdateFlags.DontValidateIndices; // Saves on compute
         
         _mesh.SetIndexBufferParams(numIndices, IndexFormat.UInt32);
         _mesh.SetIndexBufferData(indices, 0, 0, numIndices, updateFlags);

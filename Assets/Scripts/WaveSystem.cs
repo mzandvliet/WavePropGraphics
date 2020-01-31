@@ -69,7 +69,7 @@ public class WaveSystem : MonoBehaviour {
     [SerializeField] private bool _overrideDefaultBurstWorkerCount = true;
     [SerializeField] private int _burstWorkerCount = 4;
 
-    private const int WaveHeightScale = 512; // Meters
+    private const int WaveHeightScale = 1024; // Meters
 
     private NativeArray<float> _lodDistances;
 
@@ -373,17 +373,17 @@ public class WaveSystem : MonoBehaviour {
     */
 
     private void StreamNodeData(NativeArray<TreeNode> nodes, WaveSampler sampler) {
-        var streamHandles = new NativeArray<JobHandle>(nodes.Length, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+        var handles = new NativeArray<JobHandle>(nodes.Length, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
         int numVerts = _tileResolution + 1;
 
         for (int i = 0; i < nodes.Length; i++) {
             var node = nodes[i];
             var mesh = _tiles[_tileMap[node]];
 
-            var heights = mesh.HeightMap.GetRawTextureData<byte2>();
+            var heights = mesh.HeightMap.GetRawTextureData<ushort>();
             var normals = mesh.NormalMap.GetRawTextureData<float2>();
 
-            var generateJob = new StreamWaveDataJob()
+            var generateJob = new SampleWaveDataJob()
             {
                 heights = heights,
                 normals = normals,
@@ -391,10 +391,10 @@ public class WaveSystem : MonoBehaviour {
                 sampler = sampler,
                 bounds = node.bounds
             };
-            streamHandles[i] = generateJob.Schedule(numVerts * numVerts, 32);
+            handles[i] = generateJob.Schedule(numVerts * numVerts, numVerts);
         }
 
-        JobHandle.CompleteAll(streamHandles);
+        JobHandle.CompleteAll(handles);
 
         for (int i = 0; i < nodes.Length; i++) {
             var node = nodes[i];
@@ -404,7 +404,7 @@ public class WaveSystem : MonoBehaviour {
             mesh.NormalMap.Apply(true);
         }
 
-        streamHandles.Dispose();
+        handles.Dispose();
     }
 
     private void AllocateNewTileInPool() {
@@ -430,8 +430,8 @@ public class WaveSystem : MonoBehaviour {
 	}
 
     [BurstCompile]
-    public struct StreamWaveDataJob : IJobParallelFor {
-        public NativeSlice<byte2> heights;
+    public struct SampleWaveDataJob : IJobParallelFor {
+        public NativeSlice<ushort> heights;
         public NativeSlice<float2> normals;
         public int numVerts;
         public WaveSampler sampler;
@@ -449,21 +449,23 @@ public class WaveSystem : MonoBehaviour {
             float zPos = bounds.position.z + z * stepSize;
 
             float3 sample = sampler.Sample(xPos, zPos);
-            float height = (0.5f + 0.5f * sample.x);
 
-            heights[idx] = new byte2(
-                (byte)(Mathf.RoundToInt(height * 65535f) >> 8),
-                (byte)(Mathf.RoundToInt(height * 65535f))
-            );
+            const float ushortMax = 65535f;
+            const float ushortHalf = ushortMax / 2f;
+
+            heights[idx] = (ushort)(ushortHalf + sample.x * ushortHalf);
 
             // float3 normal = math.normalize(math.cross(
             //     new float3(stepSize, sample.y * WaveHeightScale, 0f),
             //     new float3(0f, sample.z * WaveHeightScale, stepSize)));
 
-            // Todo: fix scaling issue
+            /*
+            Remember:
+            cross(basis_x, basis_z) -> -basis_y
+            */
             float3 normal = math.normalize(math.cross(
-                new float3(1f, sample.y, 0f),
-                new float3(0f, sample.z, 1f)));
+                new float3(0f, sample.z, 1f),
+                new float3(1f, sample.y, 0f)));
 
             // Note: normal z-component is recalculated on the gpu, which saves transfer memory
             normals[idx] = new float2(
