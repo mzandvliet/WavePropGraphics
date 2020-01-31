@@ -225,7 +225,7 @@ GameObject:
   - component: {fileID: 1424449847}
   - component: {fileID: 1424449846}
   m_Layer: 0
-  m_Name: TerrainSystem
+  m_Name: WaveSystem
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -250,6 +250,8 @@ MonoBehaviour:
   _tileResolution: 16
   _numLods: 11
   _lodZeroRange: 32
+  _overrideDefaultBurstWorkerCount: 1
+  _burstWorkerCount: 4
 --- !u!4 &1424449847
 Transform:
   m_ObjectHideFlags: 0

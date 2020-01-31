@@ -26,7 +26,7 @@ public class Player : MonoBehaviour {
             0f,
             inputVertical * _flySpeed * Time.deltaTime, Space.Self);
 
-	    if (Input.GetKeyDown(KeyCode.Space)) {
+	    if (Input.GetKeyDown(KeyCode.T)) {
 	        _wireframe = !_wireframe;
 	    }
 	}

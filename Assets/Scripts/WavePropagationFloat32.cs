@@ -75,6 +75,8 @@ namespace Waves {
         private NativeArray<int2> _tileMap; // Todo: use for storing tile addresses when implementing world shift
         private NativeArray<float2> _tileBounds;
 
+        private NativeList<DropletPerturbation> _perturbations;
+
         const int TICKSPERFRAME = 1;
         const int NUMOCTAVES = 1;
 
@@ -91,6 +93,8 @@ namespace Waves {
             _octave = new Octave(RES, TICKSPERFRAME, Allocator.Persistent);
             _tileMap = new NativeArray<int2>(TILES_PER_DIM * TILES_PER_DIM, Allocator.Persistent);
             _tileBounds = new NativeArray<float2>(TILES_PER_DIM * TILES_PER_DIM, Allocator.Persistent);
+
+            _perturbations = new NativeList<DropletPerturbation>(512, Allocator.Persistent);
 
             _screenTex = new Texture2D(RES, RES, TextureFormat.RG16, false, true);
             _screenTex.filterMode = FilterMode.Point;
@@ -109,6 +113,8 @@ namespace Waves {
             _octave.Dispose();
             _tileMap.Dispose();
             _tileBounds.Dispose();
+
+            _perturbations.Dispose();
         }
 
         public WaveSampler GetSampler() {
@@ -135,13 +141,20 @@ namespace Waves {
                 _buffIdx0 = (_buffIdx0 + 1) % 2;
                 _buffIdx1 = (_buffIdx0 + 1) % 2;
 
-                var impulseJob = new AddRandomImpulsesJob
+                var generatePerturbationsJob = new GeneratePerturbationsJob {
+                    tick = _tick,
+                    perturbations = _perturbations,
+                };
+                var impulseHandle = generatePerturbationsJob.Schedule(_simHandle);
+
+                var impulseJob = new ProcessPerturbationsJob
                 {
                     tick = _tick,
+                    perturbations = _perturbations,
                     curr = _octave.buffer.GetBuffer(_buffIdx0),
                     prev = _octave.buffer.GetBuffer(_buffIdx1),
                 };
-                var impulseHandle = impulseJob.Schedule(_simHandle);
+                impulseHandle = impulseJob.Schedule(impulseHandle);
 
                 var simTileJob = new PropagateJob
                 {
@@ -172,6 +185,9 @@ namespace Waves {
 
         public void CompleteUpdate() {
             _simHandle.Complete();
+
+            // Clear perturbation list for next frame
+            _perturbations.Clear();
         }
 
         public void StartRender() {
@@ -190,13 +206,47 @@ namespace Waves {
             _screenTex.Apply(false);
         }
 
+        public void PerturbWavesAtRayIntersection(Ray worldRay) {
+            WaveRayHit hitInfo;
+            if (IntersectRayWaveOctave(worldRay, out hitInfo)) {
+                Rng rng;
+                unchecked {
+                    rng = new Rng(0x816EFB5Du + _tick * 0x7461CA0Du);
+                }
 
-        public void TestRaycastsWithGizmos(float3 pos, float3 dir) {
+                float strength = rng.NextFloat(.4f, .6f);
+                _perturbations.Add(new DropletPerturbation
+                {
+                    pos = (int2)(hitInfo.p.xz),
+                    strength = strength,
+                    radius = 15 + 2 * ((int)math.round(strength * 8f)), // odd-numbered radius
+                    frequency = (math.PI * 2f * 0.025f),
+                    amplitude = rng.NextFloat(0.3f, 0.5f) * strength,
+                });
+            }
+        }
+
+        public void DrawWavesRayIntersection(Ray worldRay) {
+            Color rayColor = Color.white;
+
+            Gizmos.DrawRay(worldRay.pos, worldRay.dir * 10000f);
+
+            WaveRayHit hitInfo;
+            if (IntersectRayWaveOctave(worldRay, out hitInfo)) {
+                Gizmos.color = rayColor;
+                Gizmos.DrawSphere(hitInfo.p, 8f);
+            }
+        }
+
+        public bool IntersectRayWaveOctave(Ray worldRay, out WaveRayHit hitInfo) {
             const float offset = (float)(32768 / 2);
             const float horScale = 1f / 64f;
 
-            Ray ray = new Ray(pos, dir);
+            
 
+            Ray ray = new Ray(worldRay);
+
+            // Transform to wave octave local space
             ray.pos.x = (ray.pos.x + offset) * horScale;
             ray.pos.z = (ray.pos.z + offset) * horScale;
             ray.pos.y = ray.pos.y / _heightScale;
@@ -207,13 +257,16 @@ namespace Waves {
 
             ray.dir = math.normalize(ray.dir);
 
-            Color rayColor = Color.white;
-
             var waves = _octave.buffer.GetBuffer(_buffIdx0);
 
-            bool hit = false;
             float3 hitPos = float3.zero;
 
+            hitInfo = new WaveRayHit();
+
+            /*
+            Todo: could paralellize over [x,z] here, but let's first
+            do perf testing, then the quadtree setup and such.
+            */
             for (int z = 0; z < TILES_PER_DIM; z++) {
                 for (int x = 0; x < TILES_PER_DIM; x++) {
                     int addr = Morton.Code2d(x, z);
@@ -225,54 +278,48 @@ namespace Waves {
 
                     float boxT;
                     if (RayUtil.IntersectAABB3D(tileBounds, ray, out boxT)) {
-                        rayColor = Color.yellow;
-                        Debug.LogFormat("Hit tile: [{0},{1}]", x, z);
-
                         /* Potential terrain hit, but remember that we
                         could pass clean through the box without hitting
                         anything, potentially hitting the surface only
                         later, or not at all.
                         */
 
-                        // trace against the tile's 16x16 height field
+                        // Debug.LogFormat("Hit tile: [{0},{1}]", x, z);
 
-                        // Clip ray to start at boundary
-
+                        /*
+                        Clip ray to start at boundary so we start close to target
+                        */
                         ray.pos += ray.dir * boxT;
 
-                        // Then march like so: http://www.iquilezles.org/www/articles/terrainmarching/terrainmarching.htm
+                        /*
+                        trace against the tile's 16x16 height field, like so:
+                        http://www.iquilezles.org/www/articles/terrainmarching/terrainmarching.htm
+                        */
 
-                        if (IntersectRayWaves(waves, ray)) {
-                            Debug.LogFormat("Hit pixel: [{0},{1}]", ray.pos.x, ray.pos.z);
-                            rayColor = Color.red;
-
-                            hit = true;
-
+                        if (IntersectRayWaveTile(waves, ray, out hitInfo)) {
+                            // Debug.LogFormat("Hit pixel: [{0},{1}]", ray.pos.x, ray.pos.z);
                             hitPos = ray.pos;
                             hitPos.x = (hitPos.x / horScale) - offset;
                             hitPos.z = (hitPos.z / horScale) - offset;
                             hitPos.y = hitPos.y * _heightScale;
 
-                            // break;
-                            z = TILES_PER_DIM;
-                            x = TILES_PER_DIM;
+                            return true;
                         }
                     }
                 }
             }
 
-            Gizmos.color = rayColor;
-            Gizmos.DrawRay(pos, dir * 10000f);
-
-            if (hit) {
-                Gizmos.DrawSphere(hitPos, 8f);
-            }
+            return false;
         }
 
-        private bool IntersectRayWaves(NativeArray<float> waves, Ray ray) {
+        private bool IntersectRayWaveTile(NativeArray<float> waves, Ray ray, out WaveRayHit hitInfo) {
+            // Todo: since ray query is locked to tile only, use cached
+            // morton index for faster inner loop
             const float dt = 0.1f;
             const float mint = 0.001f;
             const float maxt = 16f; // todo: get bounds diagonal as better max
+
+            hitInfo = new WaveRayHit();
 
             for (float t = mint; t < maxt; t += dt) {
                 float3 p = ray.pos + ray.dir * t;
@@ -280,11 +327,21 @@ namespace Waves {
                 float h = waves[Idx((int)p.x, (int)p.z)];
 
                 if (p.y < h) {
+                    // Todo: interpolate to get more accurate intersection
+                    hitInfo.h = h;
+                    hitInfo.p = p;
+                    hitInfo.t = t;
                     return true;
                 }
             }
 
             return false;
+        }
+
+        public struct WaveRayHit {
+            public float t;
+            public float h;
+            public float3 p;
         }
 
         public void OnDrawGUI() {
@@ -319,11 +376,48 @@ namespace Waves {
             }
         }
 
+        public struct DropletPerturbation {
+            public int2 pos;
+            public float strength;
+            public int radius;
+            public float frequency;
+            public float amplitude;
+        }
+
         [BurstCompile]
-        public struct AddRandomImpulsesJob : IJob {
+        public struct GeneratePerturbationsJob : IJob {
+            [ReadOnly] public uint tick;
+            public NativeList<DropletPerturbation> perturbations;
+
+
+            public void Execute() {
+                Rng rng;
+                unchecked {
+                    rng = new Rng(0x816EFB5Du + tick * 0x7461CA0Du);
+                }
+
+                const int impulsePeriod = 64;
+                if (tick == 0 || rng.NextInt(impulsePeriod) == 0) {
+                    float strength = rng.NextFloat(0f, 1f);
+                    perturbations.Add(new DropletPerturbation {
+                        pos = new int2(rng.NextInt(RES), rng.NextInt(RES / 3)),
+                        strength = strength,
+                        radius = 7 + 2 * ((int)math.round(strength * 16f)), // odd-numbered radius
+                        frequency = (math.PI * 2f * 0.025f),
+                        amplitude = rng.NextFloat(-0.5f, 0.5f) * strength,
+                    });
+                }
+            }
+        }
+
+        [BurstCompile]
+        public struct ProcessPerturbationsJob : IJob {
+            [ReadOnly] public uint tick;
+            [ReadOnly] public NativeList<DropletPerturbation> perturbations;
+
             public NativeArray<float> prev;
             public NativeArray<float> curr;
-            public uint tick;
+            
 
             public void Execute() {
                 /*
@@ -333,37 +427,33 @@ namespace Waves {
                  - Fixed point arithmetic instead of float?
                 */
 
-                Rng rng;
-                unchecked {
-                    rng = new Rng(0x816EFB5Du + tick * 0x7461CA0Du);
-                }
+                        for (int i = 0; i < perturbations.Length; i++) {
+                    var p = perturbations[i];
 
-                int2 pos = new int2(rng.NextInt(RES), rng.NextInt(RES/3));
-
-                float strength = rng.NextFloat(0f, 1f);
-
-                int radius = 7 + 2*((int)math.round(strength * 16f)); // odd-numbered radius
-                float amplitude = rng.NextFloat(-0.5f, 0.5f) * strength;
-                float radiusInv = 1f / (float)(radius-1);
-                float rippleFreq = (math.PI * 2f * 0.025f);
-
-                const int impulsePeriod = 64;
-                if (tick == 0 || rng.NextInt(impulsePeriod) == 0) {
-                    for (int y = -radius; y <= radius; y++) {
-                        for (int x = -radius; x <= radius; x++) {
-                            int xIdx = pos.x + x;
-                            int yIdx = pos.y + y;
+                    for (int y = -p.radius; y <= p.radius; y++) {
+                        for (int x = -p.radius; x <= p.radius; x++) {
+                            int xIdx = p.pos.x + x;
+                            int yIdx = p.pos.y + y;
 
                             if (xIdx < 0 || xIdx >= RES || yIdx < 0 || yIdx >= RES) {
+                                // Todo: hoist this condition out of inner loop
                                 continue;
                             }
 
+                            // Evaluate radial kernel
+
+                            float radiusInv = 1f / (float)(p.radius - 1);
                             float r = math.sqrt(x * x + y * y);
-                            float interp = math.smoothstep(1f, 0f, r * radiusInv);
+                            float interp = math.smoothstep(1f, 0f, r * radiusInv); // Finite perturbation profile, goes to zero
+                            float perturb = math.cos(r * p.frequency) * interp * p.amplitude; // Ripple pattern
+
                             int idx = Idx(xIdx, yIdx);
-
-                            float perturb = math.cos(r * rippleFreq) * interp * amplitude;
-
+                            
+                            /*
+                            We interpret the perturbation as affecting both current and
+                            last wave state. Bringing the past in line with the present,
+                            and preventing some discontinuities.
+                            */
                             curr[idx] = curr[idx] + perturb * 0.66f;
                             prev[idx] = prev[idx] + perturb * 0.33f;
                         }
@@ -491,6 +581,7 @@ namespace Waves {
 
             public void Execute() {
                 // Open boundary condition
+                // Todo: rewrite kernel using parameterized directionality, like before
 
                 // Bottom
                 for (int i = 0; i < RES - 1; i++) {

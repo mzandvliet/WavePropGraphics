@@ -155,9 +155,28 @@ public class TerrainSystem : MonoBehaviour {
     private CameraInfo _camInfo;
 
     private void Update() {
+        /* 
+        
+        Handle interaction, interfacing with other game systems that
+        need to affect the wave surface
+        
+        */
+
+        if (Input.GetKeyDown(KeyCode.Space)) {
+            var worldRay = new Ray(
+                _camera.transform.position, _camera.transform.forward
+            );
+            _waves.PerturbWavesAtRayIntersection(worldRay);
+        }
+
         /*
+
+        Trigger simulation update, and refresh the visual representation
+        after that.
+
         Todo:
-        Only update if camera moved more than a minimum from last update position
+
+        - Only update if camera moved more than a minimum from last update position
         */
 
         _camInfo = CameraInfo.Create(_camera, Allocator.Persistent);
@@ -256,7 +275,11 @@ public class TerrainSystem : MonoBehaviour {
             return;
         }
 
-        _waves.TestRaycastsWithGizmos(_camera.transform.position, _camera.transform.forward);
+        var worldRay = new Ray(
+            _camera.transform.position, _camera.transform.forward
+        );
+        _waves.DrawWavesRayIntersection(worldRay);
+
         DrawTree(_currVisTree);
     }
 

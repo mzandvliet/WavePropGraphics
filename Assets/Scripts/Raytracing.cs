@@ -8,6 +8,11 @@ public struct Ray {
         this.pos = origin;
         this.dir = direction;
     }
+    
+    public Ray(Ray ray) {
+        this.pos = ray.pos;
+        this.dir = ray.dir;
+    }
 }
 
 public struct BoundsF32 : System.IEquatable<BoundsF32> {
@@ -63,9 +68,6 @@ public struct BoundsF32 : System.IEquatable<BoundsF32> {
 }
 
 public static class RayUtil {
-
-    
-
     public static bool IntersectAABB3D(BoundsF32 b, Ray r, out float tmin) {
         // Based on: https://tavianator.com/fast-branchless-raybounding-box-intersections/
         // But the naive version first, to verify it works
