@@ -172,6 +172,8 @@ namespace Waves {
 
         public void CompleteUpdate() {
             _simHandle.Complete();
+
+            Debug.Log("Bounds of (1,1): " + _tileBounds[Morton.Code2d(1,1)]);
         }
 
         public void StartRender() {
@@ -347,6 +349,11 @@ namespace Waves {
                 int yMin = (tile.y == 0) ? 1 : 0;
                 int yMax = (tile.y >= TILES_PER_DIM - 1) ? TILE_RES - 1 : TILE_RES;
 
+                float2 heightBound = new float2(
+                    float.MaxValue, // Will hold min bound
+                    float.MinValue // Will hold max bound
+                );
+
                 for (int y = yMin; y < yMax; y++) {
                     for (int x = xMin; x < xMax; x++) {
                         int idx = Idx(tileBase.x + x, tileBase.y + y);
@@ -368,8 +375,14 @@ namespace Waves {
                         v = math.clamp(v, -ceiling, ceiling);
 
                         next[idx] = v;
+
+                        // Track bounds for quadtree logic
+                        if (v < heightBound.x) heightBound.x = v;
+                        if (v > heightBound.y) heightBound.y = v;
                     }
                 }
+
+                heightBounds[index] = heightBound;
             }
         }
 
