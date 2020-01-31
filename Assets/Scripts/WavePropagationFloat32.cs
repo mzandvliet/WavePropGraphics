@@ -113,13 +113,13 @@ namespace Waves {
 
         public WaveSampler GetSampler() {
             return new WaveSampler(
-                _octave.buffer.GetBuffer(buffIdx1),
+                _octave.buffer.GetBuffer(_buffIdx1),
                 _heightScale
             );
         }
 
-        private int buffIdx0 = 0;
-        private int buffIdx1 = 1;
+        private int _buffIdx0 = 0;
+        private int _buffIdx1 = 1;
 
         public void StartUpdate() {
             var scaleFactor = 1f;
@@ -132,14 +132,14 @@ namespace Waves {
 
             for (int i = 0; i < TICKSPERFRAME; i++) {
                 // Swap buffer pointers
-                buffIdx0 = (buffIdx0 + 1) % 2;
-                buffIdx1 = (buffIdx0 + 1) % 2;
+                _buffIdx0 = (_buffIdx0 + 1) % 2;
+                _buffIdx1 = (_buffIdx0 + 1) % 2;
 
                 var impulseJob = new AddRandomImpulsesJob
                 {
                     tick = _tick,
-                    curr = _octave.buffer.GetBuffer(buffIdx0),
-                    prev = _octave.buffer.GetBuffer(buffIdx1),
+                    curr = _octave.buffer.GetBuffer(_buffIdx0),
+                    prev = _octave.buffer.GetBuffer(_buffIdx1),
                 };
                 var impulseHandle = impulseJob.Schedule(_simHandle);
 
@@ -148,8 +148,8 @@ namespace Waves {
                     config = simConfig,
                     tick = _tick,
                     tileMap = _tileMap,
-                    curr = _octave.buffer.GetBuffer(buffIdx0),
-                    next = _octave.buffer.GetBuffer(buffIdx1),
+                    curr = _octave.buffer.GetBuffer(_buffIdx0),
+                    next = _octave.buffer.GetBuffer(_buffIdx1),
                     heightBounds = _tileBounds,
                 };
                 // simTileJob.Execute(); // for debugger stepthrough
@@ -157,8 +157,8 @@ namespace Waves {
                 var simBoundsJob = new PropagateBoundariesJob {
                     config = simConfig,
                     tick = _tick,
-                    curr = _octave.buffer.GetBuffer(buffIdx0),
-                    next = _octave.buffer.GetBuffer(buffIdx1),
+                    curr = _octave.buffer.GetBuffer(_buffIdx0),
+                    next = _octave.buffer.GetBuffer(_buffIdx1),
                 };
 
                 _simHandle = JobHandle.CombineDependencies(
@@ -176,7 +176,7 @@ namespace Waves {
 
         public void StartRender() {
             var texture = _screenTex.GetRawTextureData<byte2>();
-            var waveData = _octave.buffer.GetBuffer(buffIdx1);
+            var waveData = _octave.buffer.GetBuffer(_buffIdx1);
             var renderJob = new RenderJobParallel
             {
                 buf = waveData,
@@ -205,7 +205,14 @@ namespace Waves {
             ray.dir.z = ray.dir.z * horScale;
             ray.dir.y = ray.dir.y / _heightScale;
 
+            ray.dir = math.normalize(ray.dir);
+
             Color rayColor = Color.white;
+
+            var waves = _octave.buffer.GetBuffer(_buffIdx0);
+
+            bool hit = false;
+            float3 hitPos = float3.zero;
 
             for (int z = 0; z < TILES_PER_DIM; z++) {
                 for (int x = 0; x < TILES_PER_DIM; x++) {
@@ -216,19 +223,68 @@ namespace Waves {
                         new float3(x * 16f, tileHeights.x, z * 16f),
                         new float3(16f, tileHeights.y - tileHeights.x, 16f));
 
-                    if (RayUtil.IntersectAABB3D(tileBounds, ray)) {
-                        rayColor = Color.red;
+                    float boxT;
+                    if (RayUtil.IntersectAABB3D(tileBounds, ray, out boxT)) {
+                        rayColor = Color.yellow;
                         Debug.LogFormat("Hit tile: [{0},{1}]", x, z);
-                        
-                        // break
-                        z = TILES_PER_DIM;
-                        x = TILES_PER_DIM;
+
+                        /* Potential terrain hit, but remember that we
+                        could pass clean through the box without hitting
+                        anything, potentially hitting the surface only
+                        later, or not at all.
+                        */
+
+                        // trace against the tile's 16x16 height field
+
+                        // Clip ray to start at boundary
+
+                        ray.pos += ray.dir * boxT;
+
+                        // Then march like so: http://www.iquilezles.org/www/articles/terrainmarching/terrainmarching.htm
+
+                        if (IntersectRayWaves(waves, ray)) {
+                            Debug.LogFormat("Hit pixel: [{0},{1}]", ray.pos.x, ray.pos.z);
+                            rayColor = Color.red;
+
+                            hit = true;
+
+                            hitPos = ray.pos;
+                            hitPos.x = (hitPos.x / horScale) - offset;
+                            hitPos.z = (hitPos.z / horScale) - offset;
+                            hitPos.y = hitPos.y * _heightScale;
+
+                            // break;
+                            z = TILES_PER_DIM;
+                            x = TILES_PER_DIM;
+                        }
                     }
                 }
             }
 
             Gizmos.color = rayColor;
             Gizmos.DrawRay(pos, dir * 10000f);
+
+            if (hit) {
+                Gizmos.DrawSphere(hitPos, 8f);
+            }
+        }
+
+        private bool IntersectRayWaves(NativeArray<float> waves, Ray ray) {
+            const float dt = 0.1f;
+            const float mint = 0.001f;
+            const float maxt = 16f; // todo: get bounds diagonal as better max
+
+            for (float t = mint; t < maxt; t += dt) {
+                float3 p = ray.pos + ray.dir * t;
+
+                float h = waves[Idx((int)p.x, (int)p.z)];
+
+                if (p.y < h) {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         public void OnDrawGUI() {

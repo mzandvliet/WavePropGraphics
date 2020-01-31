@@ -63,30 +63,15 @@ public struct BoundsF32 : System.IEquatable<BoundsF32> {
 }
 
 public static class RayUtil {
-    public static bool IntersectAABB2D(BoundsF32 b, Ray r) {
-        float tmin = float.NegativeInfinity, tmax = float.PositiveInfinity;
 
-        if (r.dir.x != 0.0) {
-            float tx1 = (b.Min.x - r.pos.x) / r.dir.x;
-            float tx2 = (b.Max.x - r.pos.x) / r.dir.x;
+    
 
-            tmin = math.max(tmin, math.min(tx1, tx2));
-            tmax = math.min(tmax, math.max(tx1, tx2));
-        }
+    public static bool IntersectAABB3D(BoundsF32 b, Ray r, out float tmin) {
+        // Based on: https://tavianator.com/fast-branchless-raybounding-box-intersections/
+        // But the naive version first, to verify it works
 
-        if (r.dir.y != 0.0) {
-            float ty1 = (b.Min.y - r.pos.y) / r.dir.y;
-            float ty2 = (b.Max.y - r.pos.y) / r.dir.y;
-
-            tmin = math.max(tmin, math.min(ty1, ty2));
-            tmax = math.min(tmax, math.max(ty1, ty2));
-        }
-
-        return tmax >= tmin;
-    }
-
-    public static bool IntersectAABB3D(BoundsF32 b, Ray r) {
-        float tmin = float.NegativeInfinity, tmax = float.PositiveInfinity;
+        tmin = float.NegativeInfinity;
+        float tmax = float.PositiveInfinity;
 
         if (r.dir.x != 0.0) {
             float tx1 = (b.Min.x - r.pos.x) / r.dir.x;
