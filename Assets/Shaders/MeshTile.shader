@@ -79,25 +79,36 @@ Shader "Custom/Waves/MeshTile" {
 				return (c.r * 256 + c.g) / 257.0;
 			}
 
+			// half3 UnpackNormalCustom(half3 c) {
+			// 	half3 n;
+			// 	n.xy = c.xy * 2.0 - 1.0;
+			// 	n.z = sqrt(1.0 - saturate(dot(n.xy, n.xy)));
+			// 	return normalize(n);
+			// }
+
 			half3 UnpackNormalCustom(half3 c) {
-				half3 n;
-				n.xy = c.xy * 2.0 - 1.0;
-				n.z = sqrt(1.0 - saturate(dot(n.xy, n.xy)));
-				return normalize(n);
+				return normalize(c * 2.0 - 1.0);
 			}
 
-			// Todo: right now this is in unit quad space, so gridpos == vertex. Simplify.
+			/* 
+			Shifts odd-numbered vertices to even numbered vertices based on distance to camera
+			Todo: right now this is in unit quad space, so gridpos == vertex. Simplify.
+			*/
 			float2 morphVertex(float2 gridPos, float2 vertex, float lerp) {
 				const float g_resolution = 16.0; // Todo: supply from script
 
-				float2 fracPart = frac(gridPos.xy * g_resolution * 0.5) * 2; // Create sawtooth pattern that peaks every other vertex
+				// Create sawtooth pattern that peaks every other vertex
+				float2 fracPart = frac(gridPos.xy * g_resolution * 0.5) * 2; 
 				return vertex - (fracPart  / g_resolution * lerp);
 			}
 
 			v2f vert (appdata_base v) {
 				v2f o;
 
-				/* shift odd-numbered vertices to even numbered vertices based on distance to camera */
+				/*
+				Todo: As with virtual texturing, read from an index structure to figure out which
+				part of wave texture to sample, after uploading that directly to the gpu.
+				*/
 
 				float2 localVertex = float2(v.vertex.x, v.vertex.z);
 

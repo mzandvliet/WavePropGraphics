@@ -73,23 +73,31 @@ public struct WaveSampler {
         Bicubic Interpolation
 
         Todo:
+
+        - Figure out correct transforms to and from these spaces:
+
+        World space domain:
+        32768 meters wide
+        1024 meters tall
+        512px
+        16px tiles
+        4px kernels
+
+        w/h = 32
+
+        Local wave simulation domain:
+        512 pixels wide, at abstract unit distances
+        [-1,+1] tall
+
+        w/h = 512
+
+        ... aspect ratios differ by factor of 16, right?
+
+        - figure out why my [u,v] indexing is flipped from expectations
         -generate this address sequence more efficiently
-
         - simpler function starting from single pointer (like NativeSlice)
-
-        ...or perhaps even better, store in Morton Blocks of 4x4
-        coefficients? In that case, no copy or function needed,
-        bicubic can work directly on the stored data.
-
-        Slice.Reinterpret<float4> could be useful
-
-        NORMALS! Generate the here using the interpolated data, and
-        the gradient of the Cubic Hermite function! Done. :)
-
-        Then, the surface system no longer has to do its own
-        bilinear filtering, and the whole thing is better.
         */
-        
+
         var samples = new NativeArray<float4>(4, Allocator.Temp);
         for (int zk = -1; zk < 3; zk++) {
             samples[1 + zk] = new float4(

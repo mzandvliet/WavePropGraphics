@@ -381,7 +381,7 @@ public class WaveSystem : MonoBehaviour {
             var mesh = _tiles[_tileMap[node]];
 
             var heights = mesh.HeightMap.GetRawTextureData<ushort>();
-            var normals = mesh.NormalMap.GetRawTextureData<float2>();
+            var normals = mesh.NormalMap.GetRawTextureData<float4>();
 
             var generateJob = new SampleWaveDataJob()
             {
@@ -402,6 +402,11 @@ public class WaveSystem : MonoBehaviour {
 
             mesh.HeightMap.Apply(false);
             mesh.NormalMap.Apply(true);
+
+            mesh.Mesh.bounds = new UnityEngine.Bounds(
+                float3.zero, // (float3)node.bounds.position
+                (float3)node.bounds.size
+            );
         }
 
         handles.Dispose();
@@ -432,7 +437,7 @@ public class WaveSystem : MonoBehaviour {
     [BurstCompile]
     public struct SampleWaveDataJob : IJobParallelFor {
         public NativeSlice<ushort> heights;
-        public NativeSlice<float2> normals;
+        public NativeSlice<float4> normals;
         public int numVerts;
         public WaveSampler sampler;
         public Bounds bounds;
@@ -455,10 +460,6 @@ public class WaveSystem : MonoBehaviour {
 
             heights[idx] = (ushort)(ushortHalf + sample.x * ushortHalf);
 
-            // float3 normal = math.normalize(math.cross(
-            //     new float3(stepSize, sample.y * WaveHeightScale, 0f),
-            //     new float3(0f, sample.z * WaveHeightScale, stepSize)));
-
             /*
             Remember:
             cross(basis_x, basis_z) -> -basis_y
@@ -467,10 +468,11 @@ public class WaveSystem : MonoBehaviour {
                 new float3(0f, sample.z, 1f),
                 new float3(1f, sample.y, 0f)));
 
-            // Note: normal z-component is recalculated on the gpu, which saves transfer memory
-            normals[idx] = new float2(
-                0.5f + normal.x * 0.5f,
-                0.5f + normal.y * 0.5f);
+            normals[idx] = new float4(
+               0.5f + normal.x * 0.5f,
+               0.5f + normal.y * 0.5f,
+               0.5f + normal.z * 0.5f,
+               0f);
         }
     }
 }

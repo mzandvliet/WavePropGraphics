@@ -298,8 +298,15 @@ namespace Waves {
         }
 
         private bool IntersectRayWaveTile(NativeArray<float> waves, Ray ray, out WaveRayHit hitInfo) {
-            // Todo: since ray query is locked to tile only, use cached
-            // morton index for faster inner loop
+            /*
+            Todo: 
+            
+            -since ray query is locked to tile only, use cached
+            morton index for faster inner loop
+
+            - prevent out-of-bounds reads
+            
+            */
             const float dt = 0.1f;
             const float mint = 0.001f;
             const float maxt = 16f; // todo: get bounds diagonal as better max

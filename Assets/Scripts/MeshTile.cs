@@ -67,12 +67,12 @@ public class MeshTile : MonoBehaviour {
         CreateMesh(resolution);
 
         _heightMap = new Texture2D(resolution + 1, resolution + 1, TextureFormat.R16, false, true);
-        _normalMap = new Texture2D(resolution + 1, resolution + 1, TextureFormat.RGFloat, true, true); // Todo: use RGHalf?
+        _normalMap = new Texture2D(resolution + 1, resolution + 1, TextureFormat.RGBAFloat, true, true); // Todo: use RGHalf?
         _heightMap.wrapMode = TextureWrapMode.Clamp;
         _normalMap.wrapMode = TextureWrapMode.Clamp;
         _heightMap.filterMode = FilterMode.Point;
         _normalMap.filterMode = FilterMode.Bilinear;
-        _normalMap.anisoLevel = 4;
+        _normalMap.anisoLevel = 8;
 
         _renderer.material.SetTexture("_HeightTex", _heightMap);
         _renderer.material.SetTexture("_NormalTex", _normalMap);
