@@ -217,10 +217,17 @@ namespace Waves {
         }
 
         public bool IntersectRayWaveOctave(Ray worldRay, out WaveRayHit hitInfo) {
+            /* Todo:
+
+            - Use bicubic interpolation for result
+            - Sample gradient information for game systems depending on surface
+            derivatives, like the surfing system
+            - Offer wave pixel address, allowing caller to easily explore
+            surface neighborhood of hit location
+            */
+
             const float offset = (float)(32768 / 2);
             const float horScale = 1f / 64f;
-
-            
 
             Ray ray = new Ray(worldRay);
 
