@@ -278,7 +278,7 @@ namespace Waves {
 
                     float boxT;
                     if (RayUtil.IntersectAABB3D(tileBounds, ray, out boxT)) {
-                        /* Potential terrain hit, but remember that we
+                        /* Potential surface hit, but remember that we
                         could pass clean through the box without hitting
                         anything, potentially hitting the surface only
                         later, or not at all.

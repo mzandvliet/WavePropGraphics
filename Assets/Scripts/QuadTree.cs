@@ -5,17 +5,11 @@ using Unity.Collections;
 using System.Runtime.CompilerServices;
 
 /*
- * Quad tree expansion based on the procedural data is easily the most dodgy aspect of this toy project
- * right now.
- *
- * --
- *
- * Should we handle streaming and culling separately? If we temporarilly look up at the sky (no terrain drawn)
- * we don't want to *render* terrain, but we probably do want to have it *loaded* and ready to go. Stream based
- * on where we *are*, not so much based on what we're *looking at*. Only exception is zooming through a scope, really.
-
  * Todo:
- * - Hook into Unity's new sphere culling api??
+ * - Remove old C# managed prototype code
+ * - Culling pass
+ * - Pure Morton addressing scheme
+ * - Use height bound samples from wave sim, instead of resampling here
  */
 
 public static class QuadTree {

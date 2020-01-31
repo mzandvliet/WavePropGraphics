@@ -14,11 +14,11 @@ public struct Vertex {
     public float3 normal;
 }
 
-public class TerrainTile : MonoBehaviour {
+public class MeshTile : MonoBehaviour {
     private Transform _transform;
     private Mesh _mesh;
     private MeshFilter _meshFilter;
-    private MeshRenderer _meshRenderer;
+    private MeshRenderer _renderer;
     private Texture2D _heightMap;
     private Texture2D _normalMap;
 
@@ -41,7 +41,7 @@ public class TerrainTile : MonoBehaviour {
     }
 
     public MeshRenderer MeshRenderer {
-        get { return _meshRenderer; }
+        get { return _renderer; }
     }
 
     public Texture2D HeightMap {
@@ -50,26 +50,6 @@ public class TerrainTile : MonoBehaviour {
 
     public Texture2D NormalMap {
         get => _normalMap;
-    }
-
-    public int Resolution {
-        get { return _resolution; }
-    }
-
-    public int IndexEndTl {
-        get { return _indexEndTl; }
-    }
-
-    public int IndexEndTr {
-        get { return _indexEndTr; }
-    }
-
-    public int IndexEndBl {
-        get { return _indexEndBl; }
-    }
-
-    public int IndexEndBr {
-        get { return _indexEndBr; }
     }
 
     public void Create(int resolution) {
@@ -82,7 +62,7 @@ public class TerrainTile : MonoBehaviour {
 
         _resolution = resolution;
         _meshFilter = gameObject.AddComponent<MeshFilter>();
-        _meshRenderer = gameObject.AddComponent<MeshRenderer>();
+        _renderer = gameObject.AddComponent<MeshRenderer>();
         
         CreateMesh(resolution);
 
@@ -94,8 +74,8 @@ public class TerrainTile : MonoBehaviour {
         _normalMap.filterMode = FilterMode.Bilinear;
         _normalMap.anisoLevel = 4;
 
-        _meshRenderer.material.SetTexture("_HeightTex", _heightMap);
-        _meshRenderer.material.SetTexture("_NormalTex", _normalMap);
+        _renderer.material.SetTexture("_HeightTex", _heightMap);
+        _renderer.material.SetTexture("_NormalTex", _normalMap);
 }
 
     private void CreateMesh(int resolution) {

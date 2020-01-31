@@ -13,7 +13,7 @@ using Waves;
 
 Uses a quadtree mechanism to manage a virtual texturing / virtual meshing scheme
 
-See here for an overview and links to good talks by Battet08,Waveren09:
+See here for an overview and links to good talks by Barret08,Waveren09:
 
 http://holger.dammertz.org/stuff/notes_VirtualTexturing.html
 
@@ -21,14 +21,20 @@ http://holger.dammertz.org/stuff/notes_VirtualTexturing.html
 
 Todo:
 
-Octaved height texture update from interactive wave simulation
+- Use simulation's precalculated Min/Max wave height to help construct quadtree,
+instead of resampling in QuadTree expansion job.
 
-Improve normal map popping (bicubic height sampling)
+- Octaved height texture update from interactive wave simulation, straight to GPU
 
-Single mesh prototype, use material property blocks to assign textures and transforms
-Shadow pass
+- Improve normal map popping (bicubic height sampling, on GPU)
 
-Separate culling passes to find visual and shadow caster tiles, use pass tags to render them differently
+- Single mesh prototype, use material property blocks to assign textures and transforms
+
+- Implement Shadow pass
+
+- Batched raycast system
+
+- Separate culling passes to find visual and shadow caster tiles, use pass tags to render them differently
     - https://gist.github.com/pigeon6/4237385
 
 
@@ -50,7 +56,7 @@ public struct byte2 {
     }
 }
 
-public class TerrainSystem : MonoBehaviour {
+public class WaveSystem : MonoBehaviour {
     [SerializeField] private Material _material;
     [SerializeField] private Camera _camera;
     [SerializeField] private bool _showWaveDebugData = false;
@@ -62,16 +68,16 @@ public class TerrainSystem : MonoBehaviour {
     [SerializeField] private bool _overrideDefaultBurstWorkerCount = true;
     [SerializeField] private int _burstWorkerCount = 4;
 
-    private const int WaveHeightScale = 512;
+    private const int WaveHeightScale = 512; // Meters
 
     private NativeArray<float> _lodDistances;
 
-    private List<TerrainTile> _tiles; // Actual mesh/texture data
+    private List<MeshTile> _tiles; // Actual mesh/texture data
     private NativeStack<int> _tileIndexPool; // Index into list of tiles
     private NativeHashMap<TreeNode, int> _tileMap; // Page table that maps quadtree nodes to tiles
 
-    private Tree _currVisTree;
-    private Tree _lastVisTree;
+    private Tree _currVisTree; // Quad tree expanded to exactly the needed LODS for current frame
+    private Tree _lastVisTree; // Same as above, but from last frame
     private NativeList<TreeNode> _visibleSet; // Flat list of quadtree nodes, right now containing only deepest visible level
     private NativeList<TreeNode> _loadQueue; // Tiles to stream into active set
     private NativeList<TreeNode> _unloadQueue; // Tiles to stream out of active set
@@ -101,7 +107,7 @@ public class TerrainSystem : MonoBehaviour {
         _loadQueue = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
         _unloadQueue = new NativeList<TreeNode>(maxNodes, Allocator.Persistent);
 
-        _tiles = new List<TerrainTile>();
+        _tiles = new List<MeshTile>();
         _tileIndexPool = new NativeStack<int>(maxNodes, Allocator.Persistent);
         _tileMap = new NativeHashMap<TreeNode, int>(maxNodes, Allocator.Persistent);
 
@@ -110,13 +116,13 @@ public class TerrainSystem : MonoBehaviour {
     }
 
     private void ConfigureBurst() {
+        Debug.Log("--- BURST INFO ---");
         Debug.Log("Reported CacheLine Size: " + JobsUtility.CacheLineSize);
         Debug.LogFormat("Native Compilation: {0}, Job Debugger: {1}", JobsUtility.JobCompilerEnabled, JobsUtility.JobDebuggerEnabled);
         Debug.LogFormat("Default Worker Count: {0}", JobsUtility.JobWorkerCount);
         
         if (_overrideDefaultBurstWorkerCount) {
             JobsUtility.JobWorkerCount = _burstWorkerCount;
-            // JobsUtility.ResetJobWorkerCount()
             Debug.LogFormat("Custom Worker Count set to: {0}", JobsUtility.JobWorkerCount);
         }
     }
@@ -155,12 +161,15 @@ public class TerrainSystem : MonoBehaviour {
     private CameraInfo _camInfo;
 
     private void Update() {
+       UpdateInteractions();
+       UpdateSimulation();        
+    }
+
+    private void UpdateInteractions() {
         /* 
-        
-        Handle interaction, interfacing with other game systems that
-        need to affect the wave surface
-        
-        */
+       Handle interaction, interfacing with other game systems that
+       need to affect the wave surface
+       */
 
         if (Input.GetKeyDown(KeyCode.Space)) {
             var worldRay = new Ray(
@@ -168,21 +177,21 @@ public class TerrainSystem : MonoBehaviour {
             );
             _waves.PerturbWavesAtRayIntersection(worldRay);
         }
+    }
 
+    private void UpdateSimulation() {
         /*
-
         Trigger simulation update, and refresh the visual representation
         after that.
 
         Todo:
-
         - Only update if camera moved more than a minimum from last update position
         */
 
         _camInfo = CameraInfo.Create(_camera, Allocator.Persistent);
 
         _waves.StartUpdate();
-        // Todo: arrange scheduling such that this is non-blocking?
+        // Todo: arrange scheduling such that this is non-blocking
         _waves.CompleteUpdate();
 
         var waveSampler = _waves.GetSampler();
@@ -192,12 +201,13 @@ public class TerrainSystem : MonoBehaviour {
 
         _currVisTree.Clear(new Bounds(bMin, lodZeroScale));
         var loadedNodes = _tileMap.GetKeyArray(Allocator.TempJob);
-        
+
         // Todo: let these job depend on simulation jobs
-        var expandTreeJob = new ExpandQuadTreeJob() {
+        var expandTreeJob = new ExpandQuadTreeJob()
+        {
             camInfo = _camInfo,
             lodDistances = _lodDistances,
-            waveSampler  = waveSampler,
+            waveSampler = waveSampler,
             tree = _currVisTree,
             visibleSet = _visibleSet
         };
@@ -205,12 +215,14 @@ public class TerrainSystem : MonoBehaviour {
         _lodJobHandle = expandTreeJob.Schedule();
 
         var deferredVisibleSet = _visibleSet.AsDeferredJobArray();
-        var unloadDiffJob = new DiffQuadTreesJob() {
+        var unloadDiffJob = new DiffQuadTreesJob()
+        {
             a = loadedNodes,
             b = deferredVisibleSet,
             diff = _unloadQueue
         };
-        var loadDiffJob = new DiffQuadTreesJob() {
+        var loadDiffJob = new DiffQuadTreesJob()
+        {
             a = deferredVisibleSet,
             b = loadedNodes,
             diff = _loadQueue
@@ -312,7 +324,7 @@ public class TerrainSystem : MonoBehaviour {
                 continue;
             }
 
-            // Debug.Log(string.Format("Unloading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
+            // Debug.Log(string.Format("Unloading: MeshTile_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
             int idx = _tileMap[node];
             var mesh = _tiles[idx];
@@ -327,7 +339,7 @@ public class TerrainSystem : MonoBehaviour {
         for (int i = 0; i < loadQueue.Length; i++) {
             var node = loadQueue[i];
 
-            // Debug.Log(string.Format("Loading: Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
+            // Debug.Log(string.Format("Loading: MeshTile_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
             const float lMin = 2.1f, lMax = 2.9f;
             var lerpRanges = new Vector4(_lodDistances[node.depth] * lMin, _lodDistances[node.depth] * lMax);
@@ -356,7 +368,7 @@ public class TerrainSystem : MonoBehaviour {
             mesh.MeshRenderer.material.SetTexture("_HeightTex", mesh.HeightMap);
             mesh.MeshRenderer.material.SetTexture("_NormalTex", mesh.NormalMap);
             mesh.Mesh.bounds = new UnityEngine.Bounds(Vector3.zero, (float3)node.bounds.size);
-            mesh.gameObject.name = string.Format("Terrain_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z);
+            mesh.gameObject.name = string.Format("MeshTile_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z);
             mesh.gameObject.SetActive(true);
         }
     }
@@ -411,9 +423,9 @@ public class TerrainSystem : MonoBehaviour {
         _tiles.Add(tile);
     }
 
-    private static TerrainTile CreateTileObject(string name, int resolution, Material material) {
+    private static MeshTile CreateTileObject(string name, int resolution, Material material) {
         var tileObject = new GameObject(name);
-        var tile = tileObject.AddComponent<TerrainTile>();
+        var tile = tileObject.AddComponent<MeshTile>();
         tile.Create(resolution);
 	    tile.MeshRenderer.material = material;
         tile.MeshRenderer.material.SetFloat("_Scale", 16f);

@@ -1,5 +1,5 @@
 ﻿
-Shader "Custom/Terrain/TerrainTile" {
+Shader "Custom/Waves/MeshTile" {
 	Properties {
 		_MainColor ("Main Color Tint", Color) = (1,1,1,1) 
 		_MainTex ("Base (RGB)", 2D) = "white" {}

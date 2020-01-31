@@ -7,7 +7,7 @@ Material:
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: TerrainTile
+  m_Name: WaveTile
   m_Shader: {fileID: 4800000, guid: 622b7fc7cd84b25459d6b408aa049ae4, type: 3}
   m_ShaderKeywords: 
   m_LightmapFlags: 4

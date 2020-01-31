@@ -240,12 +240,12 @@ MonoBehaviour:
   m_GameObject: {fileID: 1424449845}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 4fa1c383a94c40a4291364a54b076826, type: 3}
+  m_Script: {fileID: 11500000, guid: 92861fa9a4368ac49b16cbf6206b05b0, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   _material: {fileID: 2100000, guid: 5099a9500f3dcc84f86a47e7b30512ef, type: 2}
   _camera: {fileID: 1933210033}
-  _showWaveDebugData: 1
+  _showWaveDebugData: 0
   _lodZeroScale: 32768
   _tileResolution: 16
   _numLods: 11

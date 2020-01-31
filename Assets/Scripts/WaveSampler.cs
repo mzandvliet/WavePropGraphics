@@ -61,7 +61,7 @@ public struct WaveSampler {
         NORMALS! Generate the here using the interpolated data, and
         the gradient of the Cubic Hermite function! Done. :)
 
-        Then, the TerrainSystem no longer has to do its own
+        Then, the surface system no longer has to do its own
         bilinear filtering, and the whole thing is better.
         */
         for (int zk = -1; zk < 3; zk++) {
