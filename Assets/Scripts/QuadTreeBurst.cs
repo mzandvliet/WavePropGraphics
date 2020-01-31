@@ -199,7 +199,8 @@ public struct Tree : System.IDisposable {
             for (int z = 0; z < samplingResolution; z++) {
                 float posX = bounds.position.x + x * stepSize;
                 float posZ = bounds.position.z + z * stepSize;
-                float height = sampler.Sample(posX, posZ) * sampler.heightScale;
+                float3 sample = sampler.Sample(posX, posZ);
+                float height = (0.5f + 0.5f * sample.x) * sampler.heightScale;
 
                 if (height > highest) {
                     highest = (int)height;

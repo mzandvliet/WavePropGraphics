@@ -403,7 +403,6 @@ public class TerrainSystem : MonoBehaviour {
             // Todo: calculate job-constant data on main thread instead of per pixel
 
             float stepSize = bounds.size.x / (float)(numVerts - 1);
-            float delta = stepSize * 0.1f;
 
             int x = idx % numVerts;
             int z = idx / numVerts;
@@ -411,23 +410,21 @@ public class TerrainSystem : MonoBehaviour {
             float xPos = bounds.position.x + x * stepSize;
             float zPos = bounds.position.z + z * stepSize;
 
-            float height = sampler.Sample(xPos, zPos);
+            float3 sample = sampler.Sample(xPos, zPos);
+            float height = (0.5f + 0.5f * sample.x);
 
             heights[idx] = new byte2(
                 (byte)(Mathf.RoundToInt(height * 65535f) >> 8),
                 (byte)(Mathf.RoundToInt(height * 65535f))
             );
 
-            // Todo: let the WaveSampler perform this finite differencing,
-            // since it is already doing billinear sampling and such.
-            float heightL = sampler.Sample(xPos - delta, zPos);
-            float heightR = sampler.Sample(xPos + delta, zPos);
-            float heightB = sampler.Sample(xPos, zPos - delta);
-            float heightT = sampler.Sample(xPos, zPos + delta);
+            // float3 normal = math.normalize(math.cross(
+            //     new float3(stepSize, sample.y * WaveHeightScale, 0f),
+            //     new float3(0f, sample.z * WaveHeightScale, stepSize)));
 
-            Vector3 lr = new Vector3(delta * 2f, (heightR - heightL) * sampler.heightScale, 0f);
-            Vector3 bt = new Vector3(0f, (heightT - heightB) * sampler.heightScale, delta * 2f);
-            Vector3 normal = Vector3.Cross(bt, lr).normalized;
+            float3 normal = math.normalize(math.cross(
+                new float3(1f, sample.y, 0f),
+                new float3(0f, sample.z, 1f)));
 
             // Note: normal z-component is recalculated on the gpu, which saves transfer memory
             normals[idx] = new float2(

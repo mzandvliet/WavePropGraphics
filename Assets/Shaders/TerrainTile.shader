@@ -20,7 +20,7 @@ Shader "Custom/Terrain/TerrainTile" {
 
 			#pragma vertex vert
 			#pragma fragment frag
-			#pragma multi_compile_fwdbase nolightmap nodirlightmap nodynlightmap novertexlight
+			#pragma multi_compile_fwdbase multi_compile_fog nolightmap nodirlightmap nodynlightmap novertexlight
 
 			#include "UnityCG.cginc"
 			#include "AutoLight.cginc"
@@ -37,12 +37,12 @@ Shader "Custom/Terrain/TerrainTile" {
 			struct v2f {
 				float4 pos : SV_POSITION;
 				float4 worldPos : POSITION1;
-				float3 worldNormal : TEXCOORD1;
-				
-				float2 uv1 : TEXCOORD2; // diffuse
-				float2 uv2 : TEXCOORD3; // normals
 
-				SHADOW_COORDS(5) // put shadows data into TEXCOORD1
+				float2 uv1 : TEXCOORD0; // diffuse
+				float2 uv2 : TEXCOORD1; // normals
+
+				UNITY_FOG_COORDS(2)
+				SHADOW_COORDS(3)
 			};
 
 			inline float invLerp(float start, float end, float val) {
@@ -80,10 +80,6 @@ Shader "Custom/Terrain/TerrainTile" {
 			}
 
 			half3 UnpackNormalCustom(half3 c) {
-				// half3 n = (c.xyz * 2.0) - half3(1,1,1);
-				// n.z = sqrt(1 - n.x * n.x - n.y * n.y);
-				// return normalize(n);
-
 				half3 n;
 				n.xy = c.xy * 2.0 - 1.0;
 				n.z = sqrt(1.0 - saturate(dot(n.xy, n.xy)));
@@ -131,9 +127,9 @@ Shader "Custom/Terrain/TerrainTile" {
 				// To clip space
 				o.worldPos = wsVertex;
 				o.pos = mul(UNITY_MATRIX_VP, wsVertex);
-				// o.worldNormal = UnpackNormalCustom(tex2Dlod(_NormalTex, float4(morphedVertex, 0,0)));
 
 				TRANSFER_SHADOW(o)
+				UNITY_TRANSFER_FOG(o,o.pos);
 
 				return o;
 			}
@@ -144,16 +140,6 @@ Shader "Custom/Terrain/TerrainTile" {
 				// half3 worldNormal = float3(0,1,0);
 				// half3 worldNormal = normalize(i.worldNormal);
 				half3 worldNormal = UnpackNormalCustom(tex2D(_NormalTex, i.uv2));
-
-				// const float heightScale = 512.0; // Todo: parameterize
-				// const float2 step = float2(0.0,0.05);
-				// float heightL = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(i.uv2 - step.yx,0,0)));
-                // float heightR = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(i.uv2 + step.yx,0,0)));
-                // float heightB = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(i.uv2 - step.xy,0,0)));
-                // float heightT = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(i.uv2 + step.xy,0,0)));
-				// float3 lr = float3(step.y *  _Scale * 2.0, (heightR - heightL) * heightScale, 0.0);
-                // float3 bt = float3(0.0, (heightT - heightB) * heightScale, step.y * _Scale * 2.0);
-                // float3 worldNormal = normalize(cross(bt, lr));
 
 				half attenuation = LIGHT_ATTENUATION(i) * 2;
 				
@@ -170,12 +156,15 @@ Shader "Custom/Terrain/TerrainTile" {
 
 				half NDotL = saturate(dot(worldNormal, L));
 				half4 diffuseTerm = NDotL * _LightColor0 * attenuation;
-
 				half4 diffuse = tex2D(_MainTex, i.uv1) * _MainColor;
 				half4 finalColor = (ambient + diffuseTerm) * diffuse * shadow + skyColor * 0.7;
 
 				// Normal debugging
 				// half4 finalColor = half4(0.5 + 0.5 * UnpackNormalCustom(tex2D(_NormalTex, i.uv2)), 1);
+				// finalColor = pow(finalColor, 2.5);
+
+				UNITY_APPLY_FOG(i.fogCoord, finalColor);
+                UNITY_OPAQUE_ALPHA(finalColor.a);
 
 				return finalColor;
 			}
