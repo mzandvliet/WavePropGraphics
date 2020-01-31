@@ -3,6 +3,7 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
+using Unity.Jobs.LowLevel.Unsafe;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Profiling;
@@ -58,6 +59,9 @@ public class TerrainSystem : MonoBehaviour {
     [SerializeField] private int _numLods = 10;
     [SerializeField] private int _lodZeroRange = 32;
 
+    [SerializeField] private bool _overrideDefaultBurstWorkerCount = true;
+    [SerializeField] private int _burstWorkerCount = 4;
+
     private const int WaveHeightScale = 512;
 
     private NativeArray<float> _lodDistances;
@@ -76,6 +80,8 @@ public class TerrainSystem : MonoBehaviour {
 
     void Awake() {
         Application.targetFrameRate = 60;
+
+        ConfigureBurst();
 
         _waves = new WaveSimulator(WaveHeightScale);
 
@@ -101,6 +107,18 @@ public class TerrainSystem : MonoBehaviour {
 
         const int numTiles = 256; // Todo: how many do we really need at max?
         PreallocateTiles(numTiles);
+    }
+
+    private void ConfigureBurst() {
+        Debug.Log("Reported CacheLine Size: " + JobsUtility.CacheLineSize);
+        Debug.LogFormat("Native Compilation: {0}, Job Debugger: {1}", JobsUtility.JobCompilerEnabled, JobsUtility.JobDebuggerEnabled);
+        Debug.LogFormat("Default Worker Count: {0}", JobsUtility.JobWorkerCount);
+        
+        if (_overrideDefaultBurstWorkerCount) {
+            JobsUtility.JobWorkerCount = _burstWorkerCount;
+            // JobsUtility.ResetJobWorkerCount()
+            Debug.LogFormat("Custom Worker Count set to: {0}", JobsUtility.JobWorkerCount);
+        }
     }
 
     private void OnDestroy() {
