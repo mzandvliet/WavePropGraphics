@@ -8,28 +8,6 @@ using System.Runtime.CompilerServices;
 using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs.LowLevel.Unsafe;
 
-/*
-Should cubic interpolation be a major benefit to a lot of systems,
-then we should consider supporting easy and efficient use of it.
-
-Part of the work is operating on the data once you have it in a form
-that plugs into your calculation. But the part before it is just as
-important: how do you get your data?
-
-It occured to me that storing memory in easily addressable 4x4 chunks
-of height data means that you can feed this algorithm very fast. Certainly
-as opposed to current naive implementation, which goes through an expensive
-function to generate the address for it to read from. Instead we want to
-just be like: here it is. Here is one pointer, and you'll find all the others
-just where you expect them to be. The pointer becomes the key, the key to
-the start of a sequence.
-
-Asking once is polite.
-Asking twice is ok if you really must.
-Asking thrice is getting on the nerves a bit.
-Asking four times, maybe go get your coat?
- */
-
 namespace Waves {
     public struct Octave : System.IDisposable {
         public DoubleDuffer<float> buffer;

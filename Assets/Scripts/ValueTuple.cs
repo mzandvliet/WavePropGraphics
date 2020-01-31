@@ -1,3 +1,6 @@
+/*
+Todo: with most recent DOTNET version in Unity, do we still need these?
+*/
 
 public struct ValueTuple<T> where T : struct {
     public T a;

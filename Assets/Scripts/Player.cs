@@ -1,5 +1,8 @@
 ﻿using UnityEngine;
-using System.Collections;
+
+/*
+    Note: this also does the wireframe toggle...
+*/
 
 public class Player : MonoBehaviour {
     [SerializeField] private Camera _camera;
@@ -11,7 +14,6 @@ public class Player : MonoBehaviour {
         }
     }
 
-	// Update is called once per frame
 	void Update () {
         float inputHorizontal = Input.GetAxis("Horizontal");
         float inputVertical = Input.GetAxis("Vertical");
