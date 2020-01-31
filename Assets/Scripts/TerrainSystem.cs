@@ -256,6 +256,7 @@ public class TerrainSystem : MonoBehaviour {
             return;
         }
 
+        _waves.TestRaycastsWithGizmos(_camera.transform.position, _camera.transform.forward);
         DrawTree(_currVisTree);
     }
 

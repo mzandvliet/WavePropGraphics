@@ -22,11 +22,11 @@ public struct WaveSampler {
     Todo: respect tileMap indirection, worldshifting, etc.
     */
     public float3 Sample(float x, float z) {
-        const float offset = (float)-(32768 / 2);
+        const float offset = (float)(32768 / 2);
         const float horScale = 1f / 64f;
 
-        x -= offset;
-        z -= offset;
+        x += offset;
+        z += offset;
 
         x *= horScale;
         z *= horScale;

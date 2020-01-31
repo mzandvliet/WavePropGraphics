@@ -283,6 +283,14 @@ public struct Bounds : System.IEquatable<Bounds> {
     public int3 position;
     public int3 size;
 
+    public float3 Min {
+        get => position;
+    }
+
+    public float3 Max {
+        get => position + size;
+    }
+
     public Bounds(int3 position, int3 size) {
         this.position = position;
         this.size = size;

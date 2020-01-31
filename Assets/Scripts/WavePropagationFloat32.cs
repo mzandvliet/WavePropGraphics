@@ -172,8 +172,6 @@ namespace Waves {
 
         public void CompleteUpdate() {
             _simHandle.Complete();
-
-            Debug.Log("Bounds of (1,1): " + _tileBounds[Morton.Code2d(1,1)]);
         }
 
         public void StartRender() {
@@ -190,6 +188,47 @@ namespace Waves {
         public void CompleteRender() {
             _renderHandle.Complete();
             _screenTex.Apply(false);
+        }
+
+
+        public void TestRaycastsWithGizmos(float3 pos, float3 dir) {
+            const float offset = (float)(32768 / 2);
+            const float horScale = 1f / 64f;
+
+            Ray ray = new Ray(pos, dir);
+
+            ray.pos.x = (ray.pos.x + offset) * horScale;
+            ray.pos.z = (ray.pos.z + offset) * horScale;
+            ray.pos.y = ray.pos.y / _heightScale;
+
+            ray.dir.x = ray.dir.x * horScale;
+            ray.dir.z = ray.dir.z * horScale;
+            ray.dir.y = ray.dir.y / _heightScale;
+
+            Color rayColor = Color.white;
+
+            for (int z = 0; z < TILES_PER_DIM; z++) {
+                for (int x = 0; x < TILES_PER_DIM; x++) {
+                    int addr = Morton.Code2d(x, z);
+                    var xz = _tileMap[addr];
+                    var tileHeights = _tileBounds[addr];
+                    var tileBounds = new BoundsF32(
+                        new float3(x * 16f, tileHeights.x, z * 16f),
+                        new float3(16f, tileHeights.y - tileHeights.x, 16f));
+
+                    if (RayUtil.IntersectAABB3D(tileBounds, ray)) {
+                        rayColor = Color.red;
+                        Debug.LogFormat("Hit tile: [{0},{1}]", x, z);
+                        
+                        // break
+                        z = TILES_PER_DIM;
+                        x = TILES_PER_DIM;
+                    }
+                }
+            }
+
+            Gizmos.color = rayColor;
+            Gizmos.DrawRay(pos, dir * 10000f);
         }
 
         public void OnDrawGUI() {
