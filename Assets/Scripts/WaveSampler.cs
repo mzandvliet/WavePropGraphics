@@ -44,7 +44,35 @@ public struct WaveSampler {
         float xFrac = math.frac(x);
         float zFrac = math.frac(z);
 
-        /* Todo:
+        /*
+        Nearest Neighbor, only for debugging, really
+        */
+
+        // float height = buffer[WaveSimulator.Idx(xFloor, zFloor)]; // simple nearest-neighbor test
+        // float2 tangents = new float2(0,0);
+
+        /* 
+        Bilinear Interpolation
+        */
+
+        // var b = new float2(
+        //      buffer[WaveSimulator.Idx(xFloor, zFloor)],
+        //      buffer[WaveSimulator.Idx(xFloor + 1, zFloor)]
+        // );
+        // var t = new float2(
+        //      buffer[WaveSimulator.Idx(xFloor, zFloor + 1)],
+        //      buffer[WaveSimulator.Idx(xFloor + 1, zFloor + 1)]
+        // );
+
+        // float height = Erp.BiLerp(b, t, new float2(xFrac, zFrac));
+        // float2 tangents = new float2(
+        //     b.y - b.x,
+        //     t.x - b.x);
+
+        /* 
+        Bicubic Interpolation
+
+        Todo:
         -generate this address sequence more efficiently
 
         - simpler function starting from single pointer (like NativeSlice)
@@ -61,37 +89,22 @@ public struct WaveSampler {
         Then, the surface system no longer has to do its own
         bilinear filtering, and the whole thing is better.
         */
-        // var samples = new NativeArray<float4>(4, Allocator.Temp);
-        // for (int zk = -1; zk < 3; zk++) {
-        //     samples[1 + zk] = new float4(
-        //         buffer[WaveSimulator.Idx(xFloor - 1, zFloor + zk)],
-        //         buffer[WaveSimulator.Idx(xFloor + 0, zFloor + zk)],
-        //         buffer[WaveSimulator.Idx(xFloor + 1, zFloor + zk)],
-        //         buffer[WaveSimulator.Idx(xFloor + 2, zFloor + zk)]
-        //     );
-        // }
-
-        // float height = buffer[WaveSimulator.Idx(xFloor, zFloor)]; // simple nearest-neighbor test
+        
+        var samples = new NativeArray<float4>(4, Allocator.Temp);
+        for (int zk = -1; zk < 3; zk++) {
+            samples[1 + zk] = new float4(
+                buffer[WaveSimulator.Idx(xFloor - 1, zFloor + zk)],
+                buffer[WaveSimulator.Idx(xFloor + 0, zFloor + zk)],
+                buffer[WaveSimulator.Idx(xFloor + 1, zFloor + zk)],
+                buffer[WaveSimulator.Idx(xFloor + 2, zFloor + zk)]
+            );
+        }
 
         // float height = Erp.BiLerp3(samples, xFrac, zFrac);
         // float2 tangents = Erp.BiLerp3_Grad(samples, xFrac, zFrac);
 
-        // float height = Erp.BiLerp3_sympy(samples, zFrac, xFrac);
-        // float2 tangents = Erp.BiLerp3_Grad_sympy(samples, zFrac, xFrac);
-
-        var b = new float2(
-             buffer[WaveSimulator.Idx(xFloor, zFloor)],
-             buffer[WaveSimulator.Idx(xFloor + 1, zFloor)]
-        );
-        var t = new float2(
-             buffer[WaveSimulator.Idx(xFloor, zFloor + 1)],
-             buffer[WaveSimulator.Idx(xFloor + 1, zFloor + 1)]
-        );
-
-        float height = Erp.BiLerp(b, t, new float2(xFrac, zFrac));
-        float2 tangents = new float2(
-            b.y - b.x,
-            t.x - b.x);
+        float height = Erp.BiLerp3_sympy(samples, zFrac, xFrac);
+        float2 tangents = Erp.BiLerp3_Grad_sympy(samples, zFrac, xFrac);
 
         return new float3(height, tangents);
     }

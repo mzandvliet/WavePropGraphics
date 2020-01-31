@@ -387,8 +387,8 @@ namespace Waves {
                     perturbations.Add(new DropletPerturbation {
                         pos = new int2(rng.NextInt(RES), rng.NextInt(RES / 3)),
                         strength = strength,
-                        radius = 7 + 2 * ((int)math.round(strength * 16f)), // odd-numbered radius
-                        frequency = (math.PI * 2f * 0.01f),
+                        radius = 31 + 2 * ((int)math.round(strength * 16f)), // odd-numbered radius
+                        frequency = (math.PI * 2f * 0.02f),
                         amplitude = rng.NextFloat(-0.5f, 0.5f) * strength,
                     });
                 }
