@@ -70,7 +70,7 @@ public struct BoundsF32 : System.IEquatable<BoundsF32> {
 public static class RayUtil {
     public static bool IntersectAABB3D(BoundsF32 b, Ray r, out float tmin) {
         // Based on: https://tavianator.com/fast-branchless-raybounding-box-intersections/
-        // But the naive version first, to verify it works
+        // But using the naive version first, to verify it works
 
         tmin = float.NegativeInfinity;
         float tmax = float.PositiveInfinity;

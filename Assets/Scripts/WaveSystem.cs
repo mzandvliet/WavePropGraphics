@@ -1,7 +1,6 @@
 ﻿using System.Collections.Generic;
 using Unity.Burst;
 using Unity.Collections;
-using Unity.Collections.LowLevel.Unsafe;
 using Unity.Jobs;
 using Unity.Jobs.LowLevel.Unsafe;
 using Unity.Mathematics;
@@ -25,6 +24,8 @@ Todo:
 instead of resampling in QuadTree expansion job.
 
 - Octaved height texture update from interactive wave simulation, straight to GPU
+
+- Make easier-to-use parameters. Like, at max lod I want 1px/m resolution.
 
 - Improve normal map popping (bicubic height sampling, on GPU)
 
@@ -94,7 +95,7 @@ public class WaveSystem : MonoBehaviour {
         _lodDistances = new NativeArray<float>(_numLods, Allocator.Persistent);
         QuadTree.GenerateLodDistances(_lodDistances, _lodZeroRange);
 
-        int maxNodes = mathi.SumPowersOfFour(_numLods);
+        int maxNodes = mathi32.SumPowersOfFour(_numLods);
 
         var bMin = new int3(-_lodZeroScale / 2, 0, -_lodZeroScale / 2);
         var lodZeroScale = new int3(_lodZeroScale, WaveHeightScale, _lodZeroScale);
@@ -150,12 +151,6 @@ public class WaveSystem : MonoBehaviour {
             AllocateNewTileInPool();
         }
     }
-
-    /*
-    -- Configuration --
-    
-    Make easier-to-use parameters. Like, at max lod I want 1px/m resolution.
-    */
 
     private JobHandle _lodJobHandle;
     private CameraInfo _camInfo;
@@ -249,7 +244,7 @@ public class WaveSystem : MonoBehaviour {
         Profiler.EndSample();
 
         Profiler.BeginSample("StreamData");
-        // Todo: either move to earlier in, or better yet, sample wave maps directly on gpu
+        // Todo: either move to earlier in frame, or better yet, sample wave maps directly on gpu
         var sampler = _waves.GetSampler();
         StreamNodeData(_visibleSet, sampler);
         Profiler.EndSample();
@@ -435,17 +430,6 @@ public class WaveSystem : MonoBehaviour {
 	}
 
     [BurstCompile]
-    public struct GetValuesJob : IJob {
-        [ReadOnly] public NativeHashMap<int, TreeNode> map;
-        [ReadOnly] public Allocator allocator;
-        [WriteOnly] public NativeArray<TreeNode> values;
-
-        public void Execute() {
-            values = map.GetValueArray(allocator);
-        }
-    }
-
-    [BurstCompile]
     public struct StreamWaveDataJob : IJobParallelFor {
         public NativeSlice<byte2> heights;
         public NativeSlice<float2> normals;
@@ -476,6 +460,7 @@ public class WaveSystem : MonoBehaviour {
             //     new float3(stepSize, sample.y * WaveHeightScale, 0f),
             //     new float3(0f, sample.z * WaveHeightScale, stepSize)));
 
+            // Todo: fix scaling issue
             float3 normal = math.normalize(math.cross(
                 new float3(1f, sample.y, 0f),
                 new float3(0f, sample.z, 1f)));
@@ -486,9 +471,4 @@ public class WaveSystem : MonoBehaviour {
                 0.5f + normal.y * 0.5f);
         }
     }
-}
-
-public interface IHeightSampler {
-    float HeightScale { get; }
-    float Sample(float x, float z);
 }

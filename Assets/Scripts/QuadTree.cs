@@ -7,11 +7,14 @@ using System.Runtime.CompilerServices;
 /*
  * Todo:
  * - Remove old C# managed prototype code
- * - Culling pass
- * - Pure Morton addressing scheme
- * - Use height bound samples from wave sim, instead of resampling here
  */
 
+public interface IHeightSampler {
+    float HeightScale { get; }
+    float Sample(float x, float z);
+}
+
+// Old
 public static class QuadTree {
    public static void GenerateLodDistances(NativeArray<float> lods, float lodZeroRange) {
         // Todo: this would be a lot easier to read if lod level indices were in reversed order
@@ -98,6 +101,7 @@ public static class QuadTree {
     }
 }
 
+// Old
 public class QTNode {
     private Vector3 _position;
     private Vector3 _size;

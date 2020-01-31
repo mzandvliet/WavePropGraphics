@@ -1,20 +1,22 @@
-using UnityEngine;
 using Unity.Mathematics;
 using Unity.Collections;
 using System.Runtime.CompilerServices;
 using Unity.Jobs;
 using System.Runtime.InteropServices;
 using Unity.Burst;
-using Waves;
 
 /*
 Todo: 
 
+- Use height bound samples from wave sim, instead of resampling here
+
+- Pure Morton addressing scheme
+
 - culling using Quadtree traversal and TestPlanesAABB
+
 - Post-fix expanded quadtree to ensure neighbors differ by no
 more than one level of depth. Or mathematically guarantee that
 expansion algorithm always yields such a balanced tree.
-
 */
 
 [BurstCompile]
@@ -29,7 +31,7 @@ public struct ExpandQuadTreeJob : IJob {
     public void Execute() {
         visibleSet.Clear();
 
-        var stack = new NativeStack<int2>(mathi.SumPowersOfFour(tree.MaxDepth), Allocator.Temp);
+        var stack = new NativeStack<int2>(mathi32.SumPowersOfFour(tree.MaxDepth), Allocator.Temp);
         stack.Push(0);
 
         while (stack.Count > 0) {
@@ -54,6 +56,7 @@ public struct ExpandQuadTreeJob : IJob {
                 continue;
             }
 
+            // Current node is visible, and at acceptable LOD
             visibleSet.Add(node);
         }
 
@@ -68,6 +71,9 @@ public struct DiffQuadTreesJob : IJob {
 
     public NativeList<TreeNode> diff;
 
+    /*
+    Returns: all items in A that are not in B
+    */
     public void Execute() {
         diff.Clear();
 
@@ -98,10 +104,6 @@ public static class TreeUtil {
     public static float Sqr(float x) {
         return x * x;
     }
-
-    public static int GetMortonTreeIndex(int depth, int x, int y) {
-        return mathi.SumPowersOfFour(depth-1) + Morton.Code2d(x, y);
-    }
 }
 
 // Todo: z-order curve addressing structure will simplify all of this structure
@@ -123,7 +125,7 @@ public struct Tree : System.IDisposable {
     }
 
     public Tree(Bounds bounds, int maxLevels, Allocator allocator) {
-        _nodes = new NativeHashMap<int2, TreeNode>(mathi.SumPowersOfFour(maxLevels), allocator);
+        _nodes = new NativeHashMap<int2, TreeNode>(mathi32.SumPowersOfFour(maxLevels), allocator);
         MaxDepth = maxLevels;
 
         var root = new TreeNode(bounds, 0);
@@ -161,10 +163,6 @@ public struct Tree : System.IDisposable {
         int2 brIdx = new int2(childBase | 0b01, childDepth);
         int2 tlIdx = new int2(childBase | 0b10, childDepth);
         int2 trIdx = new int2(childBase | 0b11, childDepth);
-        // _nodes[blIdx] = new TreeNode(bl, childDepth);
-        // _nodes[brIdx] = new TreeNode(br, childDepth);
-        // _nodes[tlIdx] = new TreeNode(tl, childDepth);
-        // _nodes[trIdx] = new TreeNode(tr, childDepth);
 
         _nodes.TryAdd(blIdx, new TreeNode(bl, childDepth));
         _nodes.TryAdd(brIdx, new TreeNode(br, childDepth));
@@ -175,10 +173,6 @@ public struct Tree : System.IDisposable {
         _nodes[mortonIdx] = node;
 
         return node; // Convenience, since caller's old copy of Node data will be invalidated
-    }
-
-    public void Close(int2 idx) {
-
     }
 
     private static Bounds FitHeightSamples(Bounds bounds, WaveSampler sampler) {
@@ -222,15 +216,6 @@ public struct Tree : System.IDisposable {
     public TreeNode this[int2 i] {
         get => _nodes[i];
         set => _nodes[i] = value;
-    }
-
-    public bool Contains(TreeNode node) {
-        for (int i = 0; i < _nodes.Length; i++) {
-            if (_nodes[i].bounds == node.bounds) {
-                return true;
-            }
-        }
-        return false;
     }
 }
 
@@ -326,7 +311,7 @@ public struct Bounds : System.IEquatable<Bounds> {
     }
 }
 
-public static class mathi {
+public static class mathi32 {
     public static int SumPowersOfFour(int n) {
         int n2 = n * n;
         return n * (6 * n2 * n + 9 * n2 + n - 1);
@@ -347,9 +332,5 @@ public static class mathi {
             pow >>= 1;
         }
         return v;
-    }
-
-    public static ref int RefReturnTest(int[] values, int i) {
-        return ref values[i];
     }
 }
