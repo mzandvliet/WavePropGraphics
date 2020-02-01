@@ -336,16 +336,18 @@ Shader "Custom/Waves/MeshTile" {
 
 				half shadow = SHADOW_ATTENUATION(i);
 
-				half NDotL = saturate(dot(worldNormal, L));
-				half4 diffuseTerm = NDotL * _LightColor0 * attenuation;
-				half4 diffuse = tex2D(_MainTex, i.uv1) * _MainColor;
-				half4 finalColor = (ambient + diffuseTerm) * diffuse * shadow + skyColor * 0.7;
+				
 
 				// Bicubic interp debugging
 				// half samp = samples[1][1];
-				// half samp = BiLerp3_sympy(samples, float2(xFrac, zFrac));
+				half samp = BiLerp3_sympy(samples, float2(xFrac, zFrac));
 				// half4 finalColor = half4(samp, samp, samp, 1);
 				// half4 finalColor = half4(0.5 + 0.5 * worldNormal, 1);
+
+				half NDotL = saturate(dot(worldNormal, L));
+				half4 diffuseTerm = NDotL * _LightColor0 * attenuation * (0.5 + samp * 0.7);
+				half4 diffuse = tex2D(_MainTex, i.uv1) * _MainColor;
+				half4 finalColor = (ambient + diffuseTerm) * diffuse * shadow + skyColor * 0.7;
 
 				UNITY_APPLY_FOG(i.fogCoord, finalColor);
                 UNITY_OPAQUE_ALPHA(finalColor.a);
