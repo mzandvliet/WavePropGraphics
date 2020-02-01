@@ -311,7 +311,7 @@ Shader "Custom/Waves/MeshTile" {
 				Wait, that's just the UV coordinates though, right? :)
 				*/
 
-				const float gradStep = 1.0/1.0;
+				const float gradStep = 1.0;
 				float2 grad = BiLerp3_Grad_sympy(samples, float2(xFrac, zFrac));
 				float3 worldNormal = normalize(cross(
 					float3(0, grad.y, gradStep),

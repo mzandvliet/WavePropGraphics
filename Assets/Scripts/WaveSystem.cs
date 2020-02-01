@@ -360,9 +360,7 @@ public class WaveSystem : MonoBehaviour {
             mesh.MeshRenderer.material.SetFloat("_Scale", node.bounds.size.x);
             mesh.MeshRenderer.material.SetFloat("_HeightScale", WaveHeightScale);
             mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
-
             mesh.MeshRenderer.material.SetTexture("_HeightTex", mesh.HeightMap);
-            mesh.MeshRenderer.material.SetTexture("_NormalTex", mesh.NormalMap);
             mesh.Mesh.bounds = new UnityEngine.Bounds(Vector3.zero, (float3)node.bounds.size);
             mesh.gameObject.name = string.Format("MeshTile_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z);
             mesh.gameObject.SetActive(true);
@@ -382,12 +380,10 @@ public class WaveSystem : MonoBehaviour {
             var mesh = _tiles[_tileMap[node]];
 
             var heights = mesh.HeightMap.GetRawTextureData<ushort>();
-            var normals = mesh.NormalMap.GetRawTextureData<float4>();
 
             var generateJob = new SampleWaveDataJob()
             {
                 heights = heights,
-                normals = normals,
                 numVerts = numVerts,
                 sampler = sampler,
                 bounds = node.bounds
@@ -402,10 +398,7 @@ public class WaveSystem : MonoBehaviour {
             var mesh = _tiles[_tileMap[node]];
 
             mesh.HeightMap.Apply(false);
-            mesh.NormalMap.Apply(true);
-
             mesh.MeshRenderer.material.SetTexture("_WaveTex", _waves.GetWaveTexture());
-
             mesh.Mesh.bounds = new UnityEngine.Bounds(
                 float3.zero,
                 (float3)node.bounds.size
@@ -440,7 +433,6 @@ public class WaveSystem : MonoBehaviour {
     [BurstCompile]
     public struct SampleWaveDataJob : IJobParallelFor {
         public NativeSlice<ushort> heights;
-        public NativeSlice<float4> normals;
         public int numVerts;
         public WaveSampler sampler;
         public Bounds bounds;
@@ -462,20 +454,6 @@ public class WaveSystem : MonoBehaviour {
             const float ushortHalf = ushortMax / 2f;
 
             heights[idx] = (ushort)(ushortHalf + sample.x * ushortHalf);
-
-            /*
-            Remember:
-            cross(basis_x, basis_z) -> -basis_y
-            */
-            float3 normal = math.normalize(math.cross(
-                new float3(0f, sample.z, 1f),
-                new float3(1f, sample.y, 0f)));
-
-            normals[idx] = new float4(
-               0.5f + normal.x * 0.5f,
-               0.5f + normal.y * 0.5f,
-               0.5f + normal.z * 0.5f,
-               0f);
         }
     }
 }

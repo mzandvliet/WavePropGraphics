@@ -11,7 +11,6 @@ Todo:
 
 public struct Vertex {
     public float3 position;
-    public float3 normal;
 }
 
 public class MeshTile : MonoBehaviour {
@@ -20,7 +19,6 @@ public class MeshTile : MonoBehaviour {
     private MeshFilter _meshFilter;
     private MeshRenderer _renderer;
     private Texture2D _heightMap;
-    private Texture2D _normalMap;
 
     private int _resolution;
     private int _indexEndTl;
@@ -48,10 +46,6 @@ public class MeshTile : MonoBehaviour {
         get => _heightMap;
     }
 
-    public Texture2D NormalMap {
-        get => _normalMap;
-    }
-
     public void Create(int resolution) {
         _transform = gameObject.GetComponent<Transform>();
 
@@ -67,15 +61,10 @@ public class MeshTile : MonoBehaviour {
         CreateMesh(resolution);
 
         _heightMap = new Texture2D(resolution + 1, resolution + 1, TextureFormat.R16, false, true);
-        _normalMap = new Texture2D(resolution + 1, resolution + 1, TextureFormat.RGBAFloat, true, true); // Todo: use RGHalf?
         _heightMap.wrapMode = TextureWrapMode.Clamp;
-        _normalMap.wrapMode = TextureWrapMode.Clamp;
         _heightMap.filterMode = FilterMode.Point;
-        _normalMap.filterMode = FilterMode.Bilinear;
-        _normalMap.anisoLevel = 8;
 
         _renderer.material.SetTexture("_HeightTex", _heightMap);
-        _renderer.material.SetTexture("_NormalTex", _normalMap);
 }
 
     private void CreateMesh(int resolution) {
@@ -90,7 +79,6 @@ public class MeshTile : MonoBehaviour {
             for (int x = 0; x < vertsPerDim; x++) {
                 vertices[vertsPerDim * y + x] = new Vertex {
                     position = new float3(x/(float)resolution, 0f, y/(float)resolution),
-                    normal = new float3(0,1,0)
                 };
             }
         }
@@ -117,8 +105,7 @@ public class MeshTile : MonoBehaviour {
 
         _mesh.SetVertexBufferParams(
             numVerts,
-            new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3),
-            new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3)
+            new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3)
         );
 
         // var updateFlags = MeshUpdateFlags.Default;

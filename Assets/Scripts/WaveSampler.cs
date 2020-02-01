@@ -112,7 +112,9 @@ public struct WaveSampler {
         // float2 tangents = Erp.BiLerp3_Grad(samples, xFrac, zFrac);
 
         float height = Erp.BiLerp3_sympy(samples, zFrac, xFrac);
-        float2 tangents = Erp.BiLerp3_Grad_sympy(samples, zFrac, xFrac);
+        // float2 tangents = Erp.BiLerp3_Grad_sympy(samples, zFrac, xFrac);
+
+        float2 tangents = float2.zero;
 
         return new float3(height, tangents);
     }
