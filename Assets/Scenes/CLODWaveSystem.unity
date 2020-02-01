@@ -249,7 +249,7 @@ MonoBehaviour:
   _lodZeroScale: 32768
   _tileResolution: 16
   _numLods: 11
-  _lodZeroRange: 32
+  _lodZeroRange: 48
   _overrideDefaultBurstWorkerCount: 1
   _burstWorkerCount: 4
 --- !u!4 &1424449847
@@ -410,7 +410,7 @@ Camera:
     width: 1
     height: 1
   near clip plane: 0.01
-  far clip plane: 40000
+  far clip plane: 100000
   field of view: 60
   orthographic: 0
   orthographic size: 5

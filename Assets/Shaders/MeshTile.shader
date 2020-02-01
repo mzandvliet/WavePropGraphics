@@ -38,8 +38,7 @@ Shader "Custom/Waves/MeshTile" {
 			float4 _MainColor;
 			sampler2D _MainTex;
 			sampler2D _WaveTex;
-			sampler2D _HeightTex;
-			sampler2D _NormalTex;
+			float2 _TileRes; // (resolution, 1.0 / resolution)
 			float _Scale;
 			float _HeightScale;
 			float2 _LerpRanges;
@@ -66,29 +65,24 @@ Shader "Custom/Waves/MeshTile" {
 			 * Could optimize by sampling from pre-calculated texture specificalliy for filtering step (http://http.developer.nvidia.com/GPUGems2/gpugems2_chapter18.html)
 			 * or by evaluating procedural height function after morphing vertex
 			 */
-			float4 tex2Dlod_bilinear(sampler2D tex, float4 uv) {
-				const float g_resolution = 16.0; // Todo: set from script
-				const float g_resolutionInv = 1/g_resolution;
+			// float4 tex2Dlod_bilinear(sampler2D tex, float4 uv) {
+			// 	float2 pixelFrac = frac(uv.xy * _TileRes.x);
 
-				float2 pixelFrac = frac(uv.xy * g_resolution);
+			// 	float4 baseUV = uv - float4(pixelFrac * _TileRes.y,0,0);
+			// 	float4 heightBL = tex2Dlod(tex, baseUV);
+			// 	float4 heightBR = tex2Dlod(tex, baseUV + float4(_TileRes.y,0,0,0));
+			// 	float4 heightTL = tex2Dlod(tex, baseUV + float4(0,_TileRes.y,0,0));
+			// 	float4 heightTR = tex2Dlod(tex, baseUV + float4(_TileRes.y,_TileRes.y,0,0));
 
-				float4 baseUV = uv - float4(pixelFrac * g_resolutionInv,0,0);
-				float4 heightBL = tex2Dlod(tex, baseUV);
-				float4 heightBR = tex2Dlod(tex, baseUV + float4(g_resolutionInv,0,0,0));
-				float4 heightTL = tex2Dlod(tex, baseUV + float4(0,g_resolutionInv,0,0));
-				float4 heightTR = tex2Dlod(tex, baseUV + float4(g_resolutionInv,g_resolutionInv,0,0));
+			// 	float4 tA = lerp(heightBL, heightBR, pixelFrac.x);
+			// 	float4 tB = lerp(heightTL, heightTR, pixelFrac.x);
 
-				float4 tA = lerp(heightBL, heightBR, pixelFrac.x);
-				float4 tB = lerp(heightTL, heightTR, pixelFrac.x);
+			// 	return lerp(tA, tB, pixelFrac.y);
+			// }
 
-				return lerp(tA, tB, pixelFrac.y);
-
-				// return tex2Dlod(tex, float4(uv.xy, 0,0));
-			}
-
-			float UnpackHeight(float4 c) {
-				return (c.r * 256 + c.g) / 257.0;
-			}
+			// float UnpackHeight(float4 c) {
+			// 	return (c.r * 256 + c.g) / 257.0;
+			// }
 
 			// half3 UnpackNormalCustom(half3 c) {
 			// 	half3 n;
@@ -208,31 +202,113 @@ Shader "Custom/Waves/MeshTile" {
 				return float2(output_0, output_1);
 			}
 
+			float SampleNearest(float3 worldPos) {
+				const float horScale = 1.0 / 64.0;
+				const float offset = (32768 / 2) * horScale;
+
+				float x = worldPos.x;
+				float z = worldPos.z;
+
+				x *= horScale;
+				z *= horScale;
+
+				x += offset;
+        		z += offset;
+
+				int xFloor = floor(x);
+        		int zFloor = floor(z);
+
+				float scale = 1.0/512.0;
+				float halfScale = scale / 2.0;
+				return tex2Dlod(_WaveTex, float4(halfScale + (xFloor)*scale, halfScale + (zFloor)*scale, 0, 0));
+			}
+
+			float SampleHeightBicubic(float3 worldPos) {
+				const float horScale = 1.0 / 64.0;
+				const float offset = (32768 / 2) * horScale;
+
+				float x = worldPos.x;
+				float z = worldPos.z;
+
+				x *= horScale;
+				z *= horScale;
+
+				x += offset;
+        		z += offset;
+
+				int xFloor = floor(x);
+        		int zFloor = floor(z);
+
+				float xFrac = frac(x);
+				float zFrac = frac(z);
+
+				float scale = 1.0/512.0;
+				float halfScale = scale / 2.0;
+				float4x4 samples = float4x4(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
+				for (int zk = -1; zk < 3; zk++) {
+					for (int xk = -1; xk < 3; xk++) {
+						samples[1+xk][1+zk] = tex2Dlod(_WaveTex, float4(halfScale + (xFloor+xk)*scale, halfScale + (zFloor+zk)*scale, 0, 0));
+					}
+				}
+
+				return BiLerp3_sympy(samples, float2(xFrac, zFrac));
+			}
+
+			float3 SampleNormalBicubic(float3 worldPos) {
+				const float horScale = 1.0 / 64.0;
+				const float offset = (32768 / 2) * horScale;
+
+				float x = worldPos.x;
+				float z = worldPos.z;
+
+				x *= horScale;
+				z *= horScale;
+
+				x += offset;
+        		z += offset;
+
+				int xFloor = floor(x);
+        		int zFloor = floor(z);
+
+				float xFrac = frac(x);
+				float zFrac = frac(z);
+
+				float scale = 1.0/512.0;
+				float halfScale = scale / 2.0;
+				float4x4 samples = float4x4(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
+				for (int zk = -1; zk < 3; zk++) {
+					for (int xk = -1; xk < 3; xk++) {
+						samples[1+xk][1+zk] = tex2Dlod(_WaveTex, float4(halfScale + (xFloor+xk)*scale, halfScale + (zFloor+zk)*scale, 0, 0));
+					}
+				}
+
+				const float gradStep = 1.0;
+				float2 grad = BiLerp3_Grad_sympy(samples, float2(xFrac, zFrac));
+				return normalize(cross(
+					float3(0, grad.y, gradStep),
+					float3(gradStep, grad.x, 0)));
+			}
+
 			/* 
 			Shifts odd-numbered vertices to even numbered vertices based on distance to camera
 			Todo: right now this is in unit quad space, so gridpos == vertex. Simplify.
 			*/
 			float2 morphVertex(float2 gridPos, float2 vertex, float lerp) {
-				const float g_resolution = 16.0; // Todo: supply from script
-
 				// Create sawtooth pattern that peaks every other vertex
-				float2 fracPart = frac(gridPos.xy * g_resolution * 0.5) * 2; 
-				return vertex - (fracPart  / g_resolution * lerp);
+				float2 fracPart = frac(gridPos.xy * _TileRes.x * 0.5) * 2; 
+				return vertex - (fracPart * _TileRes.y * lerp);
 			}
 
 			v2f vert (appdata_base v) {
 				v2f o;
 
-				/*
-				Todo: As with virtual texturing, read from an index structure to figure out which
-				part of wave texture to sample, after uploading that directly to the gpu.
-				*/
-
 				float2 localVertex = float2(v.vertex.x, v.vertex.z);
-
-				float height = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(localVertex, 0, 0)));
-
 				float4 wsVertex = mul(unity_ObjectToWorld, v.vertex); // world space vert for distance
+
+				// float height = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(localVertex, 0, 0)));
+				// float height = SampleHeightBicubic(wsVertex);
+				float height = SampleNearest(wsVertex);
+
 				wsVertex.y = height * _HeightScale;
 
 				// Construct morph parameter based on distance to camera
@@ -244,13 +320,14 @@ Shader "Custom/Waves/MeshTile" {
 				wsVertex.x = morphedVertex.x;
 				wsVertex.z = morphedVertex.y;
 
-				o.uv1 = morphedVertex * _Scale / 16.0; // Todo: set resolution and uv-scale from script
+				o.uv1 = morphedVertex * _Scale / _TileRes.x;
 				o.uv2 = morphedVertex;
 
 				wsVertex = mul(unity_ObjectToWorld, wsVertex); // Morphed vertex to world space
 
 				// Sample height using morphed local unit space
-				height = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(morphedVertex,0,0)));
+				// height = UnpackHeight(tex2Dlod_bilinear(_HeightTex, float4(morphedVertex,0,0)));
+				height = SampleHeightBicubic(wsVertex);
 				wsVertex.y = height * _HeightScale;
 
 				// To clip space
@@ -266,62 +343,10 @@ Shader "Custom/Waves/MeshTile" {
 			half4 frag(v2f i) : COLOR {
 				half3 L = normalize(_WorldSpaceLightPos0.xyz);
 
-				/// ------
-
-				const float horScale = 1.0 / 64.0;
-				const float offset = (32768 / 2) * horScale;
-
-				float x = i.worldPos.x;
-				float z = i.worldPos.z;
-
-				x *= horScale;
-				z *= horScale;
-
-				x += offset;
-        		z += offset;
-
-				int xFloor = floor(x);
-        		int zFloor = floor(z);
-
-				float xFrac = frac(x);
-				float zFrac = frac(z);
-
-				/*
-				To try:
-
-				Let texture system generate mipmaps for wave texture, see how it looks
-				Could use that for something, including recursive interpolation.
-
-				Maybe do this in the vertex shader, and try NORMAL interpolation?
-				*/
-
-				float scale = 1.0/512.0;
-				float halfScale = scale / 2.0;
-				float4x4 samples = float4x4(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
-				for (int zk = -1; zk < 3; zk++) {
-					for (int xk = -1; xk < 3; xk++) {
-						samples[1+xk][1+zk] = tex2Dlod(_WaveTex, float4(halfScale + (xFloor+xk)*scale, halfScale + (zFloor+zk)*scale, 0, 0));
-					}
-				}
-
-				/*
-				Ok, fun problem: We need to project our screen pixel coordinates into
-				the wave system's intrinsic space.
-
-				Wait, that's just the UV coordinates though, right? :)
-				*/
-
-				const float gradStep = 1.0;
-				float2 grad = BiLerp3_Grad_sympy(samples, float2(xFrac, zFrac));
-				float3 worldNormal = normalize(cross(
-					float3(0, grad.y, gradStep),
-					float3(gradStep, grad.x, 0)));
-
-				/// ------
-
 				// half3 worldNormal = float3(0,1,0);
 				// half3 worldNormal = normalize(i.worldNormal);
 				// half3 worldNormal = UnpackNormalCustom(tex2D(_NormalTex, i.uv2));
+				half3 worldNormal = SampleNormalBicubic(i.worldPos);
 
 				half attenuation = LIGHT_ATTENUATION(i) * 2;
 				
@@ -336,16 +361,14 @@ Shader "Custom/Waves/MeshTile" {
 
 				half shadow = SHADOW_ATTENUATION(i);
 
-				
-
 				// Bicubic interp debugging
 				// half samp = samples[1][1];
-				half samp = BiLerp3_sympy(samples, float2(xFrac, zFrac));
+				// half samp = BiLerp3_sympy(samples, float2(xFrac, zFrac));
 				// half4 finalColor = half4(samp, samp, samp, 1);
 				// half4 finalColor = half4(0.5 + 0.5 * worldNormal, 1);
 
 				half NDotL = saturate(dot(worldNormal, L));
-				half4 diffuseTerm = NDotL * _LightColor0 * attenuation * (0.5 + samp * 0.7);
+				half4 diffuseTerm = NDotL * _LightColor0 * attenuation * (0.5 + (i.worldPos.y/512.0) * 0.7);
 				half4 diffuse = tex2D(_MainTex, i.uv1) * _MainColor;
 				half4 finalColor = (ambient + diffuseTerm) * diffuse * shadow + skyColor * 0.7;
 

@@ -18,7 +18,6 @@ public class MeshTile : MonoBehaviour {
     private Mesh _mesh;
     private MeshFilter _meshFilter;
     private MeshRenderer _renderer;
-    private Texture2D _heightMap;
 
     private int _resolution;
     private int _indexEndTl;
@@ -42,10 +41,6 @@ public class MeshTile : MonoBehaviour {
         get { return _renderer; }
     }
 
-    public Texture2D HeightMap {
-        get => _heightMap;
-    }
-
     public void Create(int resolution) {
         _transform = gameObject.GetComponent<Transform>();
 
@@ -59,12 +54,6 @@ public class MeshTile : MonoBehaviour {
         _renderer = gameObject.AddComponent<MeshRenderer>();
         
         CreateMesh(resolution);
-
-        _heightMap = new Texture2D(resolution + 1, resolution + 1, TextureFormat.R16, false, true);
-        _heightMap.wrapMode = TextureWrapMode.Clamp;
-        _heightMap.filterMode = FilterMode.Point;
-
-        _renderer.material.SetTexture("_HeightTex", _heightMap);
 }
 
     private void CreateMesh(int resolution) {

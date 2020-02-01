@@ -337,7 +337,7 @@ public class WaveSystem : MonoBehaviour {
 
             // Debug.Log(string.Format("Loading: MeshTile_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z));
 
-            const float lMin = 2.1f, lMax = 2.9f;
+            const float lMin = 2.1f, lMax = 2.5f;
             var lerpRanges = new Vector4(_lodDistances[node.depth] * lMin, _lodDistances[node.depth] * lMax);
 
             if (_tileMap.ContainsKey(node)) {
@@ -357,10 +357,10 @@ public class WaveSystem : MonoBehaviour {
             float3 position = new float3(node.bounds.position.x, 0f, node.bounds.position.z);
             mesh.Transform.position = position;
             mesh.Transform.localScale = new float3(node.bounds.size.x, 1f, node.bounds.size.z);
+            mesh.MeshRenderer.material.SetVector("_TileRes", new float4(_tileResolution, 1f / _tileResolution, 0, 0));
             mesh.MeshRenderer.material.SetFloat("_Scale", node.bounds.size.x);
             mesh.MeshRenderer.material.SetFloat("_HeightScale", WaveHeightScale);
             mesh.MeshRenderer.material.SetVector("_LerpRanges", lerpRanges);
-            mesh.MeshRenderer.material.SetTexture("_HeightTex", mesh.HeightMap);
             mesh.Mesh.bounds = new UnityEngine.Bounds(Vector3.zero, (float3)node.bounds.size);
             mesh.gameObject.name = string.Format("MeshTile_D{0}_[{1},{2}]", node.depth, node.bounds.position.x, node.bounds.position.z);
             mesh.gameObject.SetActive(true);
@@ -372,32 +372,32 @@ public class WaveSystem : MonoBehaviour {
     */
 
     private void StreamNodeData(NativeArray<TreeNode> nodes, WaveSampler sampler) {
-        var handles = new NativeArray<JobHandle>(nodes.Length, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
-        int numVerts = _tileResolution + 1;
+        // var handles = new NativeArray<JobHandle>(nodes.Length, Allocator.Temp, NativeArrayOptions.UninitializedMemory);
+        // int numVerts = _tileResolution + 1;
+
+        // for (int i = 0; i < nodes.Length; i++) {
+        //     var node = nodes[i];
+        //     var mesh = _tiles[_tileMap[node]];
+
+        //     var heights = mesh.HeightMap.GetRawTextureData<ushort>();
+
+        //     var generateJob = new SampleWaveDataJob()
+        //     {
+        //         heights = heights,
+        //         numVerts = numVerts,
+        //         sampler = sampler,
+        //         bounds = node.bounds
+        //     };
+        //     handles[i] = generateJob.Schedule(numVerts * numVerts, numVerts);
+        // }
+
+        // JobHandle.CompleteAll(handles);
 
         for (int i = 0; i < nodes.Length; i++) {
             var node = nodes[i];
             var mesh = _tiles[_tileMap[node]];
 
-            var heights = mesh.HeightMap.GetRawTextureData<ushort>();
-
-            var generateJob = new SampleWaveDataJob()
-            {
-                heights = heights,
-                numVerts = numVerts,
-                sampler = sampler,
-                bounds = node.bounds
-            };
-            handles[i] = generateJob.Schedule(numVerts * numVerts, numVerts);
-        }
-
-        JobHandle.CompleteAll(handles);
-
-        for (int i = 0; i < nodes.Length; i++) {
-            var node = nodes[i];
-            var mesh = _tiles[_tileMap[node]];
-
-            mesh.HeightMap.Apply(false);
+            // mesh.HeightMap.Apply(false);
             mesh.MeshRenderer.material.SetTexture("_WaveTex", _waves.GetWaveTexture());
             mesh.Mesh.bounds = new UnityEngine.Bounds(
                 float3.zero,
@@ -405,7 +405,7 @@ public class WaveSystem : MonoBehaviour {
             );
         }
 
-        handles.Dispose();
+        // handles.Dispose();
     }
 
     private void AllocateNewTileInPool() {
@@ -430,30 +430,30 @@ public class WaveSystem : MonoBehaviour {
 	    return tile;
 	}
 
-    [BurstCompile]
-    public struct SampleWaveDataJob : IJobParallelFor {
-        public NativeSlice<ushort> heights;
-        public int numVerts;
-        public WaveSampler sampler;
-        public Bounds bounds;
+    // [BurstCompile]
+    // public struct SampleWaveDataJob : IJobParallelFor {
+    //     public NativeSlice<ushort> heights;
+    //     public int numVerts;
+    //     public WaveSampler sampler;
+    //     public Bounds bounds;
         
-        public void Execute(int idx) {
-            // Todo: calculate job-constant data on main thread instead of per pixel
+    //     public void Execute(int idx) {
+    //         // Todo: calculate job-constant data on main thread instead of per pixel
 
-            float stepSize = bounds.size.x / (float)(numVerts - 1);
+    //         float stepSize = bounds.size.x / (float)(numVerts - 1);
 
-            int x = idx % numVerts;
-            int z = idx / numVerts;
+    //         int x = idx % numVerts;
+    //         int z = idx / numVerts;
 
-            float xPos = bounds.position.x + x * stepSize;
-            float zPos = bounds.position.z + z * stepSize;
+    //         float xPos = bounds.position.x + x * stepSize;
+    //         float zPos = bounds.position.z + z * stepSize;
 
-            float3 sample = sampler.Sample(xPos, zPos);
+    //         float3 sample = sampler.Sample(xPos, zPos);
 
-            const float ushortMax = 65535f;
-            const float ushortHalf = ushortMax / 2f;
+    //         const float ushortMax = 65535f;
+    //         const float ushortHalf = ushortMax / 2f;
 
-            heights[idx] = (ushort)(ushortHalf + sample.x * ushortHalf);
-        }
-    }
+    //         heights[idx] = (ushort)(ushortHalf + sample.x * ushortHalf);
+    //     }
+    // }
 }

@@ -391,9 +391,9 @@ namespace Waves {
                     rng = new Rng(0x816EFB5Du + tick * 0x7461CA0Du);
                 }
 
-                const int impulsePeriod = 64;
+                const int impulsePeriod = 72;
                 if (tick == 0 || rng.NextInt(impulsePeriod) == 0) {
-                    float strength = rng.NextFloat(0f, 1f);
+                    float strength = rng.NextFloat(0f, 0.5f);
                     perturbations.Add(new DropletPerturbation {
                         pos = new int2(rng.NextInt(RES), rng.NextInt(RES / 3)),
                         strength = strength,
