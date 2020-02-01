@@ -245,7 +245,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   _material: {fileID: 2100000, guid: 5099a9500f3dcc84f86a47e7b30512ef, type: 2}
   _camera: {fileID: 1933210033}
-  _showWaveDebugData: 0
+  _showWaveDebugData: 1
   _lodZeroScale: 32768
   _tileResolution: 16
   _numLods: 11

@@ -235,6 +235,9 @@ public class WaveSystem : MonoBehaviour {
     private void LateUpdate() {
         _lodJobHandle.Complete();
 
+        // Todo: work back into job chain, without main sync
+        _waves.Render();
+
         Profiler.BeginSample("FreeTile");
         FreeTiles(_unloadQueue);
         Profiler.EndSample();
@@ -264,8 +267,6 @@ public class WaveSystem : MonoBehaviour {
         }
         
         if (_showWaveDebugData) {
-            _waves.StartRender();
-            _waves.CompleteRender();
             _waves.OnDrawGUI();
         }
 
@@ -403,8 +404,10 @@ public class WaveSystem : MonoBehaviour {
             mesh.HeightMap.Apply(false);
             mesh.NormalMap.Apply(true);
 
+            mesh.MeshRenderer.material.SetTexture("_WaveTex", _waves.GetWaveTexture());
+
             mesh.Mesh.bounds = new UnityEngine.Bounds(
-                float3.zero, // (float3)node.bounds.position
+                float3.zero,
                 (float3)node.bounds.size
             );
         }

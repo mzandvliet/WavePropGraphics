@@ -1,10 +1,20 @@
 ﻿
+/*
+
+--
+
+Based on the paper Continuous Distance-Dependent Level of Detail
+For Rendering Heightmaps (CDLOD), by Filip Strugar, 2010
+
+https://github.com/fstrugar/CDLOD/blob/master/cdlod_paper_latest.pdf
+
+*/
+
 Shader "Custom/Waves/MeshTile" {
 	Properties {
 		_MainColor ("Main Color Tint", Color) = (1,1,1,1) 
 		_MainTex ("Base (RGB)", 2D) = "white" {}
-		_HeightTex ("Height Map", 2D) = "white" {}
-		_NormalTex ("Normal Map", 2D) = "bump" {}
+		_WaveTex ("Wave Height (R)", 2D) = "white" {}
 	}
 
 	SubShader {
@@ -27,6 +37,7 @@ Shader "Custom/Waves/MeshTile" {
 
 			float4 _MainColor;
 			sampler2D _MainTex;
+			sampler2D _WaveTex;
 			sampler2D _HeightTex;
 			sampler2D _NormalTex;
 			float _Scale;
@@ -90,6 +101,113 @@ Shader "Custom/Waves/MeshTile" {
 				return normalize(c * 2.0 - 1.0);
 			}
 
+			float BiLerp3_sympy(float4x4 p, float2 uv) {
+				float u = uv.x;
+				float v = uv.y;
+
+				/*----------------terms-------------------*/
+
+				float a0 = -1.0 / 2.0 * p[0][1];
+				float a1 = u * (a0 + (1.0 / 2.0) * p[2][1]);
+				float a2 = pow(u, 2);
+				float a3 = -5.0 / 2.0 * p[1][1];
+				float a4 = (1.0 / 2.0) * p[3][1];
+				float a5 = a2 * (a3 - a4 + p[0][1] + 2 * p[2][1]);
+				float a6 = pow(u, 3);
+				float a7 = (3.0 / 2.0) * p[1][1];
+				float a8 = a6 * (a0 + a4 + a7 - 3.0 / 2.0 * p[2][1]);
+				float a9 = -1.0 / 2.0 * p[0][2];
+				float a10 = u * (a9 + (1.0 / 2.0) * p[2][2]);
+				float a11 = (1.0 / 2.0) * p[3][2];
+				float a12 = a2 * (-a11 + p[0][2] - 5.0 / 2.0 * p[1][2] + 2 * p[2][2]);
+				float a13 = (3.0 / 2.0) * p[1][2];
+				float a14 = a6 * (a11 + a13 + a9 - 3.0 / 2.0 * p[2][2]);
+				float a15 = -1.0 / 2.0 * p[0][0];
+				float a16 = u * (a15 + (1.0 / 2.0) * p[2][0]);
+				float a17 = (1.0 / 2.0) * p[3][0];
+				float a18 = a2 * (-a17 + p[0][0] - 5.0 / 2.0 * p[1][0] + 2 * p[2][0]);
+				float a19 = a6 * (a15 + a17 + (3.0 / 2.0) * p[1][0] - 3.0 / 2.0 * p[2][0]);
+				float a20 = -1.0 / 2.0 * a16 - 1.0 / 2.0 * a18 - 1.0 / 2.0 * a19 - 1.0 / 2.0 * p[1][0];
+				float a21 = (1.0 / 2.0) * p[1][3];
+				float a22 = -1.0 / 2.0 * p[0][3];
+				float a23 = (1.0 / 2.0) * u * (a22 + (1.0 / 2.0) * p[2][3]);
+				float a24 = (1.0 / 2.0) * p[3][3];
+				float a25 = (1.0 / 2.0) * a2 * (-a24 + p[0][3] - 5.0 / 2.0 * p[1][3] + 2 * p[2][3]);
+				float a26 = (1.0 / 2.0) * a6 * (a22 + a24 + (3.0 / 2.0) * p[1][3] - 3.0 / 2.0 * p[2][3]);
+
+				/*--------------solutions------------------*/
+
+				float output_0 = a1 + a5 + a8 + p[1][1] + pow(v, 3) * ((3.0 / 2.0) * a1 - 3.0 / 2.0 * a10 - 3.0 / 2.0 * a12 - a13 - 3.0 / 2.0 * a14 + a20 + a21 + a23 + a25
+				+ a26 + (3.0 / 2.0) * a5 + a7 + (3.0 / 2.0) * a8) + pow(v, 2) * (-5.0 / 2.0 * a1 + 2 * a10 + 2 * a12 + 2 * a14 + a16 + a18 + a19 - a21 - a23 - a25 - a26 + a3 -
+				5.0 / 2.0 * a5 - 5.0 / 2.0 * a8 + p[1][0] + 2 * p[1][2]) + v * ((1.0 / 2.0) * a10 + (1.0 / 2.0) * a12 + (1.0 / 2.0) * a14 + a20 + (1.0 / 2.0) * p[1][2]);
+
+				return output_0;
+			}
+
+			float2 BiLerp3_Grad_sympy(float4x4 p, float2 uv) {
+				float u = uv.x;
+				float v = uv.y;
+
+				/*----------------terms-------------------*/
+
+				float a0 = (1.0 / 2.0) * p[3][2];
+				float a1 = -a0 + p[0][2] - 5.0 / 2.0 * p[1][2] + 2 * p[2][2];
+				float a2 = a1 * u;
+				float a3 = -1.0 / 2.0 * p[0][2];
+				float a4 = (3.0 / 2.0) * p[1][2];
+				float a5 = a0 + a3 + a4 - 3.0 / 2.0 * p[2][2];
+				float a6 = pow(u, 2);
+				float a7 = (3.0 / 2.0) * a6;
+				float a8 = (1.0 / 2.0) * p[3][0];
+				float a9 = -a8 + p[0][0] - 5.0 / 2.0 * p[1][0] + 2 * p[2][0];
+				float a10 = a9 * u;
+				float a11 = -1.0 / 2.0 * p[0][0];
+				float a12 = a11 + a8 + (3.0 / 2.0) * p[1][0] - 3.0 / 2.0 * p[2][0];
+				float a13 = -a10 - a12 * a7 + (1.0 / 4.0) * p[0][0] - 1.0 / 4.0 * p[2][0];
+				float a14 = pow(v, 2);
+				float a15 = (1.0 / 4.0) * p[2][3];
+				float a16 = (1.0 / 4.0) * p[0][3];
+				float a17 = (1.0 / 2.0) * p[3][3];
+				float a18 = -a17 + p[0][3] - 5.0 / 2.0 * p[1][3] + 2 * p[2][3];
+				float a19 = a18 * u;
+				float a20 = -5.0 / 2.0 * p[1][1];
+				float a21 = (1.0 / 2.0) * p[3][1];
+				float a22 = a20 - a21 + p[0][1] + 2 * p[2][1];
+				float a23 = a22 * u;
+				float a24 = 3 * a6;
+				float a25 = a5 * a6;
+				float a26 = -1.0 / 2.0 * p[0][1];
+				float a27 = (3.0 / 2.0) * p[1][1];
+				float a28 = a21 + a26 + a27 - 3.0 / 2.0 * p[2][1];
+				float a29 = a28 * a6;
+				float a30 = -1.0 / 2.0 * p[0][3];
+				float a31 = a17 + a30 + (3.0 / 2.0) * p[1][3] - 3.0 / 2.0 * p[2][3];
+				float a32 = a31 * a7;
+				float a33 = a11 + (1.0 / 2.0) * p[2][0];
+				float a34 = a26 + (1.0 / 2.0) * p[2][1];
+				float a35 = u * (a3 + (1.0 / 2.0) * p[2][2]);
+				float a36 = a1 * a6;
+				float a37 = pow(u, 3);
+				float a38 = a37 * a5;
+				float a39 = (1.0 / 2.0) * p[1][3];
+				float a40 = a33 * u;
+				float a41 = a34 * u;
+				float a42 = (1.0 / 2.0) * u * (a30 + (1.0 / 2.0) * p[2][3]);
+				float a43 = a6 * a9;
+				float a44 = (1.0 / 2.0) * a18 * a6;
+				float a45 = a12 * a37;
+				float a46 = a28 * a37;
+				float a47 = (1.0 / 2.0) * a31 * a37;
+				float a48 = -1.0 / 2.0 * a40 - 1.0 / 2.0 * a43 - 1.0 / 2.0 * a45 - 1.0 / 2.0 * p[1][0];
+
+				/*--------------solutions------------------*/
+
+				float output_0 = a14 * (2 * a10 + a12 * a24 - a15 + a16 - a19 + 4 * a2 - 5 * a23 + 6 * a25 - 15.0 / 2.0 * a29 - a32 + a33 + (5.0 / 4.0) * p[0][1] - p[0][2] - 5.0 / 4.0 * p[2][1] + p[2][2]) + 2 * a23 + a24 * a28 + a34 + pow(v, 3) * (a13 + a15 - a16 + a19 - 3 * a2 + 3 * a23 - 9.0 / 2.0 * a25 + (9.0 / 2.0) * a29 + a32 - 3.0 / 4.0 * p[0][1] + (3.0 / 4.0) * p[0][2] + (3.0 / 4.0) * p[2][1] - 3.0 / 4.0 * p[2][2]) + v * (a13 + a2 + a5 * a7 - 1.0 / 4.0 * p[0][2] + (1.0 / 4.0) * p[2][2]);
+				float output_1 = 3 * a14 * (-a1 * a7 + a22 * a7 + a27 - 3.0 / 2.0 * a35 - 3.0 / 2.0 * a38 + a39 - a4 + (3.0 / 2.0) * a41 + a42 + a44 + (3.0 / 2.0) * a46 + a47 + a48) + (1.0 / 2.0) * a35 + (1.0 / 2.0) * a36 + (1.0 / 2.0) * a38 + a48 + (1.0 / 2.0) * p[1][2] + 2 * v * (a20 - 5.0 / 2.0 * a22 * a6 + 2 * a35 + 2 * a36 + 2 * a38 - a39 + a40 - 5.0 / 2.0 * a41 - a42 + a43 - a44 + a45 - 5.0 / 2.0 * a46 - a47 + p[1][0] + 2 * p[1][2]);
+
+				return float2(output_0, output_1);
+			}
+
 			/* 
 			Shifts odd-numbered vertices to even numbered vertices based on distance to camera
 			Todo: right now this is in unit quad space, so gridpos == vertex. Simplify.
@@ -148,9 +266,63 @@ Shader "Custom/Waves/MeshTile" {
 			half4 frag(v2f i) : COLOR {
 				half3 L = normalize(_WorldSpaceLightPos0.xyz);
 
+				/// ------
+
+				const float horScale = 1.0 / 64.0;
+				const float offset = (32768 / 2) * horScale;
+
+				float x = i.worldPos.x;
+				float z = i.worldPos.z;
+
+				x *= horScale;
+				z *= horScale;
+
+				x += offset;
+        		z += offset;
+
+				int xFloor = floor(x);
+        		int zFloor = floor(z);
+
+				float xFrac = frac(x);
+				float zFrac = frac(z);
+
+				/*
+				To try:
+
+				Let texture system generate mipmaps for wave texture, see how it looks
+				Could use that for something, including recursive interpolation.
+
+				Maybe do this in the vertex shader, and try NORMAL interpolation?
+				*/
+
+				const float featureScale = 1.0/3;
+
+				float4x4 samples = float4x4(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
+				for (int zk = -1; zk < 3; zk++) {
+					for (int xk = -1; xk < 3; xk++) {
+						samples[1+xk][1+zk] = tex2Dlod(_WaveTex, float4((xFloor+xk)/512.0, (zFloor+zk)/512.0, 0, 0));
+						// samples[1+xk][1+zk] = cos((xFloor+xk) * featureScale) * sin((zFloor+zk) * featureScale);
+						// samples[1+xk][1+zk] = zk % 2;
+					}
+				}
+
+				/*
+				Ok, fun problem: We need to project our screen pixel coordinates into
+				the wave system's intrinsic space.
+
+				Wait, that's just the UV coordinates though, right? :)
+				*/
+
+				float2 grad = BiLerp3_Grad_sympy(samples, float2(xFrac, zFrac));
+				float3 worldNormal = normalize(cross(
+					float3(0, grad.y, 1),
+					float3(1, grad.x, 0)));
+
+				/// ------
+
 				// half3 worldNormal = float3(0,1,0);
 				// half3 worldNormal = normalize(i.worldNormal);
-				half3 worldNormal = UnpackNormalCustom(tex2D(_NormalTex, i.uv2));
+				// half3 worldNormal = UnpackNormalCustom(tex2D(_NormalTex, i.uv2));
 
 				half attenuation = LIGHT_ATTENUATION(i) * 2;
 				
@@ -168,11 +340,13 @@ Shader "Custom/Waves/MeshTile" {
 				half NDotL = saturate(dot(worldNormal, L));
 				half4 diffuseTerm = NDotL * _LightColor0 * attenuation;
 				half4 diffuse = tex2D(_MainTex, i.uv1) * _MainColor;
-				half4 finalColor = (ambient + diffuseTerm) * diffuse * shadow + skyColor * 0.7;
+				// half4 finalColor = (ambient + diffuseTerm) * diffuse * shadow + skyColor * 0.7;
 
-				// Normal debugging
-				// half4 finalColor = half4(0.5 + 0.5 * UnpackNormalCustom(tex2D(_NormalTex, i.uv2)), 1);
-				// finalColor = pow(finalColor, 2.5);
+				// Bicubic interp debugging
+				// half samp = samples[1][1];
+				half samp = BiLerp3_sympy(samples, float2(xFrac, zFrac));
+				half4 finalColor = half4(samp, samp, samp, 1);
+				// half4 finalColor = half4(0.5 + 0.5 * worldNormal, 1);
 
 				UNITY_APPLY_FOG(i.fogCoord, finalColor);
                 UNITY_OPAQUE_ALPHA(finalColor.a);

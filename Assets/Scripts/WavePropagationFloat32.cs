@@ -58,7 +58,7 @@ namespace Waves {
         const int TICKSPERFRAME = 1;
         const int NUMOCTAVES = 1;
 
-        private Texture2D _screenTex;
+        private Texture2D _waveTex;
 
         private uint _tick = 0;
 
@@ -74,8 +74,9 @@ namespace Waves {
 
             _perturbations = new NativeList<DropletPerturbation>(512, Allocator.Persistent);
 
-            _screenTex = new Texture2D(RES, RES, TextureFormat.RG16, false, true);
-            _screenTex.filterMode = FilterMode.Point;
+            _waveTex = new Texture2D(RES, RES, TextureFormat.RFloat, false, true);
+            _waveTex.filterMode = FilterMode.Point;
+            _waveTex.wrapMode = TextureWrapMode.Clamp;
 
             for (int y = 0; y < TILES_PER_DIM; y++) {
                 for (int x = 0; x < TILES_PER_DIM; x++) {
@@ -100,6 +101,10 @@ namespace Waves {
                 _octave.buffer.GetBuffer(_buffIdx1),
                 _heightScale
             );
+        }
+
+        public Texture2D GetWaveTexture() {
+            return _waveTex;
         }
 
         private int _buffIdx0 = 0;
@@ -168,20 +173,18 @@ namespace Waves {
             _perturbations.Clear();
         }
 
-        public void StartRender() {
-            var texture = _screenTex.GetRawTextureData<byte2>();
+        public void Render() {
+            var texture = _waveTex.GetRawTextureData<float>();
             var waveData = _octave.buffer.GetBuffer(_buffIdx1);
             var renderJob = new RenderJobParallel
             {
                 buf = waveData,
                 texture = texture
             };
-            _renderHandle = renderJob.Schedule(RES * RES, 32, _renderHandle);
-        }
+            _renderHandle = renderJob.Schedule(RES * RES, 32);
 
-        public void CompleteRender() {
             _renderHandle.Complete();
-            _screenTex.Apply(false);
+            _waveTex.Apply(false);
         }
 
         public void PerturbWavesAtRayIntersection(Ray worldRay) {
@@ -338,7 +341,7 @@ namespace Waves {
 
         public void OnDrawGUI() {
             float size = math.min(Screen.width, Screen.height) * 0.5f;
-            GUI.DrawTexture(new Rect(0f, 0f, size, size), _screenTex, ScaleMode.ScaleToFit);
+            GUI.DrawTexture(new Rect(0f, 0f, size, size), _waveTex, ScaleMode.ScaleToFit);
         }
 
         public struct SimConfig {
@@ -661,7 +664,7 @@ namespace Waves {
         [BurstCompile]
         public struct RenderJobParallel : IJobParallelFor {
             [ReadOnly] public NativeArray<float> buf;
-            [WriteOnly] public NativeArray<byte2> texture;
+            [WriteOnly] public NativeArray<float> texture;
 
             public void Execute(int i) {
                 int2 c = Coord(i);
@@ -676,12 +679,13 @@ namespace Waves {
                 //     (byte)pos
                 // );
 
-                var color = new byte2(
-                    (byte) ((0.5f + 0.5f * sample) * 255f),
-                    0
-                );
+                // var color = new byte2(
+                //     (byte) ((0.5f + 0.5f * sample) * 255f),
+                //     0
+                // );
 
-                texture[i] = color;
+                // texture[i] = sample;
+                texture[i] = math.cos(c.x * 0.1f) * math.sin(c.y * 0.1f);
             }
         }
 
