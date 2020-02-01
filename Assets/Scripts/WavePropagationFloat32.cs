@@ -684,8 +684,8 @@ namespace Waves {
                 //     0
                 // );
 
-                // texture[i] = sample;
-                texture[i] = math.cos(c.x * 0.1f) * math.sin(c.y * 0.1f);
+                texture[i] = sample;
+                // texture[i] = math.cos(c.x * 0.1f) * math.sin(c.y * 0.1f);
             }
         }
 

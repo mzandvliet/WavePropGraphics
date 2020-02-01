@@ -295,14 +295,12 @@ Shader "Custom/Waves/MeshTile" {
 				Maybe do this in the vertex shader, and try NORMAL interpolation?
 				*/
 
-				const float featureScale = 1.0/3;
-
+				float scale = 1.0/512.0;
+				float halfScale = scale / 2.0;
 				float4x4 samples = float4x4(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0);
 				for (int zk = -1; zk < 3; zk++) {
 					for (int xk = -1; xk < 3; xk++) {
-						samples[1+xk][1+zk] = tex2Dlod(_WaveTex, float4((xFloor+xk)/512.0, (zFloor+zk)/512.0, 0, 0));
-						// samples[1+xk][1+zk] = cos((xFloor+xk) * featureScale) * sin((zFloor+zk) * featureScale);
-						// samples[1+xk][1+zk] = zk % 2;
+						samples[1+xk][1+zk] = tex2Dlod(_WaveTex, float4(halfScale + (xFloor+xk)*scale, halfScale + (zFloor+zk)*scale, 0, 0));
 					}
 				}
 
@@ -313,10 +311,11 @@ Shader "Custom/Waves/MeshTile" {
 				Wait, that's just the UV coordinates though, right? :)
 				*/
 
+				const float gradStep = 1.0/1.0;
 				float2 grad = BiLerp3_Grad_sympy(samples, float2(xFrac, zFrac));
 				float3 worldNormal = normalize(cross(
-					float3(0, grad.y, 1),
-					float3(1, grad.x, 0)));
+					float3(0, grad.y, gradStep),
+					float3(gradStep, grad.x, 0)));
 
 				/// ------
 
@@ -340,12 +339,12 @@ Shader "Custom/Waves/MeshTile" {
 				half NDotL = saturate(dot(worldNormal, L));
 				half4 diffuseTerm = NDotL * _LightColor0 * attenuation;
 				half4 diffuse = tex2D(_MainTex, i.uv1) * _MainColor;
-				// half4 finalColor = (ambient + diffuseTerm) * diffuse * shadow + skyColor * 0.7;
+				half4 finalColor = (ambient + diffuseTerm) * diffuse * shadow + skyColor * 0.7;
 
 				// Bicubic interp debugging
 				// half samp = samples[1][1];
-				half samp = BiLerp3_sympy(samples, float2(xFrac, zFrac));
-				half4 finalColor = half4(samp, samp, samp, 1);
+				// half samp = BiLerp3_sympy(samples, float2(xFrac, zFrac));
+				// half4 finalColor = half4(samp, samp, samp, 1);
 				// half4 finalColor = half4(0.5 + 0.5 * worldNormal, 1);
 
 				UNITY_APPLY_FOG(i.fogCoord, finalColor);
